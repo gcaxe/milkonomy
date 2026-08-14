@@ -7,7 +7,7 @@ import { handleVolume1hSearch } from "../utils"
 /** 查 */
 export async function getFavoriteDataApi(params: RequestData) {
   await new Promise(resolve => setTimeout(resolve, 300))
-  const sellTaxFactor = params.includeTax === false ? 1 : 0.98
+  const sellTaxFactor = params.includeTax === false ? 1 : 0.95
   const crossStepBalance = params.crossStepBalance === true
   let profitList: Calculator[] = []
   try {

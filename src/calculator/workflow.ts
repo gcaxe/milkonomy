@@ -47,7 +47,7 @@ export class WorkflowCalculator extends Calculator {
   /**
    * configs为工作流顺序排列
    */
-  constructor(configs: Arrayable<StorageCalculatorItem>[], project: string, sellTaxFactor: number = 0.98, crossStepBalance: boolean = false) {
+  constructor(configs: Arrayable<StorageCalculatorItem>[], project: string, sellTaxFactor: number = 0.95, crossStepBalance: boolean = false) {
     let last = configs[configs.length - 1]
     if (Array.isArray(last)) {
       last = last[0]

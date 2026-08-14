@@ -12,7 +12,7 @@ const props = withDefaults(defineProps<{
 }>(), {
   modelValue: undefined,
   min: 0,
-  max: 5000000000,
+  max: 1000000000000,
   placeholder: "",
   disabled: false,
   width: "120px"

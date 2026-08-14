@@ -404,7 +404,7 @@ export class EnhanceCalculator extends Calculator {
 
     const decomposeIncome = decomposeCal.successRate * decomposeCal.productListWithPrice.reduce((acc, item) => acc + item.price * item.count * (item.rate || 1), 0)
     const decomposeCost = decomposeCal.ingredientListWithPrice.slice(1).reduce((acc, item) => acc + item.price * item.count, 0)
-    this._maxProfitApproximate = (decomposeIncome * (this._targetRate || 1) + income) * 0.98 - cost - decomposeCost * (this._targetRate || 1)
+    this._maxProfitApproximate = (decomposeIncome * (this._targetRate || 1) + income) * 0.95 - cost - decomposeCost * (this._targetRate || 1)
     return this._maxProfitApproximate
   }
 

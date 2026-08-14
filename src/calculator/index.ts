@@ -18,7 +18,7 @@ export interface CalculatorConfig {
   catalystRank?: number
   enhanceLevel?: number
   originLevel?: number
-  /** 市场卖出税率因子：默认 0.98(2%税)；设为 1 表示不计税 */
+  /** 市场卖出税率因子：默认 0.95(5%税)；设为 1 表示不计税 */
   sellTaxFactor?: number
 }
 export default abstract class Calculator {
@@ -36,8 +36,8 @@ export default abstract class Calculator {
   hasManualPrice: boolean = false
   config: CalculatorConfig
   enhanceLevel: number = 0
-  /** 市场卖出税率因子：默认 0.98(2%税)；设为 1 表示不计税 */
-  sellTaxFactor: number = 0.98
+  /** 市场卖出税率因子：默认 0.95(5%税)；设为 1 表示不计税 */
+  sellTaxFactor: number = 0.95
   constructor(config: CalculatorConfig) {
     const { hrid, project, action, ingredientPriceConfigList = [], productPriceConfigList = [], catalystRank } = config
     this.config = config

@@ -17,7 +17,7 @@ const { t } = locales.global
 /** 查 */
 export async function getLeaderboardDataApi(params: Leaderboard.RequestData) {
   const includeTax = params.includeTax !== false
-  const sellTaxFactor = includeTax ? 0.98 : 1
+  const sellTaxFactor = includeTax ? 0.95 : 1
   const crossStepBalance = params.crossStepBalance === true
 
   let profitList: Calculator[] = []
