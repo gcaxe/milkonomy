@@ -1,0 +1,667 @@
+<script lang="ts" setup>
+import type Calculator from "@/calculator"
+import ItemIcon from "@@/components/ItemIcon/index.vue"
+import { usePagination } from "@@/composables/usePagination"
+import { Edit, Search } from "@element-plus/icons-vue"
+import { ElMessageBox, type FormInstance, type Sort } from "element-plus"
+import { cloneDeep, debounce } from "lodash-es"
+import { useRouter } from "vue-router"
+
+import { getPriceOf } from "@/common/apis/game"
+import { getDataApi as getJungleDataApi } from "@/common/apis/jungle"
+import { getDataApi as getSuperJungleDataApi } from "@/common/apis/jungle/junglest"
+import { useMemory } from "@/common/composables/useMemory"
+import { usePriceStatus } from "@/common/composables/usePriceStatus"
+import * as Format from "@/common/utils/format"
+import { useGameStore } from "@/pinia/stores/game"
+import { usePlayerStore } from "@/pinia/stores/player"
+import { usePriceStore } from "@/pinia/stores/price"
+import ActionConfig from "../dashboard/components/ActionConfig.vue"
+import ActionDetail from "../dashboard/components/ActionDetail.vue"
+import ActionPrice from "../dashboard/components/ActionPrice.vue"
+import GameInfo from "../dashboard/components/GameInfo.vue"
+import ManualPriceCard from "../dashboard/components/ManualPriceCard.vue"
+import PriceStatusSelect from "../dashboard/components/PriceStatusSelect.vue"
+
+// #region 查
+const { paginationData: paginationDataLD, handleCurrentChange: handleCurrentChangeLD, handleSizeChange: handleSizeChangeLD } = usePagination({}, "jungle-leaderboard-pagination")
+const leaderboardData = ref<Calculator[]>([])
+const ldSearchFormRef = ref<FormInstance | null>(null)
+const dataSource = useMemory("jungle-data-source", { type: "jungle" })
+
+const ldSearchData = useMemory("jungle-leaderboard-search-data", {
+  name: "",
+  project: "",
+  profitRate: "",
+  maxLevel: 20,
+  minLevel: 1,
+  minOriginLevel: undefined,
+  maxOriginLevel: undefined,
+  banEquipment: false,
+  banCharm: false,
+  onlySkillingEquipment: false,
+  onlyCombatEquipment: false,
+  onlySkillingTool: false,
+  onlySkillingGear: false,
+  maxItemLevel: undefined,
+  bestManufacture: false
+})
+
+const loadingLD = ref(false)
+
+// 防抖处理
+const getLeaderboardData = debounce(() => {
+  loadingLD.value = true
+
+  const dataApi = dataSource.value.type === "junglest" ? getSuperJungleDataApi : getJungleDataApi
+  dataApi({
+    currentPage: paginationDataLD.currentPage,
+    size: paginationDataLD.pageSize,
+    ...ldSearchData.value,
+    sort: sortLD.value
+  }).then((data) => {
+    paginationDataLD.total = data.total
+    leaderboardData.value = data.list
+  }).catch((e) => {
+    console.error(e)
+    leaderboardData.value = []
+  }).finally(() => {
+    loadingLD.value = false
+  })
+}, 300)
+function handleSearchLD() {
+  paginationDataLD.currentPage === 1 ? getLeaderboardData() : (paginationDataLD.currentPage = 1)
+}
+
+function handleDataSourceChange() {
+  if (dataSource.value.type === "junglest") {
+    ldSearchData.value.project = ""
+  }
+  handleSearchLD()
+}
+
+const manualPriceMemoryKey = computed(() => (
+  dataSource.value.type === "junglest" ? "junglest" : "jungle"
+))
+
+function getEquipmentFilterMode() {
+  if (ldSearchData.value.onlySkillingEquipment) return "skilling"
+  if (ldSearchData.value.onlyCombatEquipment) return "combat"
+  return "all"
+}
+
+function getSkillingSubFilterMode() {
+  if (ldSearchData.value.onlySkillingTool) return "tool"
+  if (ldSearchData.value.onlySkillingGear) return "gear"
+  return "all"
+}
+
+function handleEquipmentFilterModeChange(value: string | number | boolean | undefined) {
+  const mode = String(value)
+  ldSearchData.value.onlySkillingEquipment = mode === "skilling"
+  ldSearchData.value.onlyCombatEquipment = mode === "combat"
+  if (mode !== "skilling") {
+    ldSearchData.value.onlySkillingTool = false
+    ldSearchData.value.onlySkillingGear = false
+  }
+  handleSearchLD()
+}
+
+function handleSkillingSubFilterModeChange(value: string | number | boolean | undefined) {
+  const mode = String(value)
+  ldSearchData.value.onlySkillingTool = mode === "tool"
+  ldSearchData.value.onlySkillingGear = mode === "gear"
+  handleSearchLD()
+}
+
+const sortLD: Ref<Sort | undefined> = ref()
+function handleSortLD(sort: Sort) {
+  sortLD.value = sort
+  getLeaderboardData()
+}
+
+// 监听分页参数的变化
+watch([
+  () => paginationDataLD.currentPage,
+  () => paginationDataLD.pageSize,
+  () => useGameStore().marketData,
+  () => usePlayerStore().config,
+  () => useGameStore().buyStatus,
+  () => useGameStore().sellStatus
+
+], getLeaderboardData, { immediate: true })
+
+// #endregion
+
+// #region deepWatch
+
+watch(() => usePriceStore(), () => {
+  getLeaderboardData()
+}, { deep: true })
+// #endregion
+
+const currentRow = ref<Calculator>()
+const detailVisible = ref<boolean>(false)
+async function showDetail(row: Calculator) {
+  currentRow.value = cloneDeep(row)
+  detailVisible.value = true
+}
+
+const priceVisible = ref<boolean>(false)
+const currentPriceRow = ref<Calculator>()
+function setPrice(row: Calculator) {
+  const activated = usePriceStore().activated
+  if (!activated) {
+    ElMessageBox.confirm(t("是否确定开启自定义价格？"), t("需先开启自定义价格"), {
+      confirmButtonText: t("确定"),
+      cancelButtonText: t("取消"),
+      closeOnClickModal: true
+    }).then(() => {
+      usePriceStore().setActivated(true)
+    })
+    return
+  }
+  currentPriceRow.value = cloneDeep(row)
+  priceVisible.value = true
+}
+
+const { t } = useI18n()
+
+const router = useRouter()
+
+function getEnhanceLevelOfRow(row: any): number | undefined {
+  const raw = row?.calculator?.enhanceLevel ?? row?.enhanceLevel
+  const level = Math.floor(Number(raw))
+  if (!Number.isFinite(level)) return undefined
+  if (level < 1 || level > 20) return undefined
+  return level
+}
+
+function goToEnhancer(row: any) {
+  const hrid = row?.hrid
+  if (!hrid) return
+  const enhanceLevel = getEnhanceLevelOfRow(row)
+  router.push({
+    path: "/enhancer",
+    query: {
+      hrid,
+      enhanceLevel: enhanceLevel !== undefined ? String(enhanceLevel) : undefined
+    }
+  })
+}
+
+function formatVolume1h(row: any) {
+  const hrid = row?.hrid
+  const level = row?.calculator?.enhanceLevel ?? 0
+  const vol = getPriceOf(hrid, level).vol ?? -1
+  return vol < 0 ? "-" : Format.number(vol)
+}
+
+function formatExpectedTime(row: any) {
+  const products = row?.productListWithPrice
+  if (!Array.isArray(products) || products.length === 0) return "-"
+
+  const targetLevel = getEnhanceLevelOfRow(row) ?? 0
+  const targetProduct = products.find((item: any) => (
+    item?.hrid === row?.hrid && (item?.level ?? 0) === targetLevel
+  )) ?? products[0]
+
+  const countPH = Number(targetProduct?.countPH)
+  if (!Number.isFinite(countPH) || countPH <= 0) return "-"
+
+  const seconds = 3600 / countPH
+  return Format.costTime(seconds * 1000000000)
+}
+
+const onPriceStatusChange = usePriceStatus("jungle-price-status")
+
+function escapeRegExp(text: string) {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+}
+
+const projectFilterOptions = computed(() => [
+  {
+    label: t("强化"),
+    value: `^${escapeRegExp(t("强化"))}\\+`
+  },
+  {
+    label: `${t("缝纫")}${t("强化")}`,
+    value: escapeRegExp(t("裁缝"))
+  },
+  {
+    label: `${t("制作")}${t("强化")}`,
+    value: escapeRegExp(t("制造"))
+  },
+  {
+    label: `${t("锻造")}${t("强化")}`,
+    value: escapeRegExp(t("锻造"))
+  }
+])
+
+const isSuperJungle = computed(() => dataSource.value.type === "junglest")
+</script>
+
+<template>
+  <div class="app-container">
+    <div class="game-info">
+      <GameInfo />
+      <div>
+        <ActionConfig :actions="['enhancing', 'cheesesmithing', 'crafting', 'tailoring']" :equipments="['off_hand', 'hands', 'neck', 'earrings', 'ring', 'pouch']" />
+      </div>
+      <PriceStatusSelect
+        @change="onPriceStatusChange"
+      />
+      <div>
+        {{ t('打野爽！') }}
+      </div>
+      <div>
+        <el-radio-group v-model="dataSource.type" @change="handleDataSourceChange" size="small" class="filter-segment">
+          <el-radio-button label="jungle">
+            {{ t('打野工具') }}
+          </el-radio-button>
+          <el-radio-button label="junglest">
+            {{ t('超级打野工具') }}
+          </el-radio-button>
+        </el-radio-group>
+      </div>
+    </div>
+    <el-row :gutter="20" class="row">
+      <el-col :xs="24" :sm="24" :md="24" :lg="24" :xl="16">
+        <el-card>
+          <template #header>
+            <el-form class="rank-card" ref="ldSearchFormRef" :inline="true" :model="ldSearchData">
+              <div class="title">
+                {{ t('利润排行') }}
+              </div>
+              <el-form-item prop="name" :label="t('物品')">
+                <el-input style="width:100px" v-model="ldSearchData.name" :placeholder="t('请输入')" clearable @input="handleSearchLD" />
+              </el-form-item>
+
+              <el-form-item v-if="!isSuperJungle" prop="project" :label="t('动作')">
+                <el-select style="width: 130px" v-model="ldSearchData.project" clearable @change="handleSearchLD">
+                  <el-option
+                    v-for="option in projectFilterOptions"
+                    :key="option.value"
+                    :label="option.label"
+                    :value="option.value"
+                  />
+                </el-select>
+              </el-form-item>
+
+              <el-form-item :label="t('目标等级从')">
+                <el-input-number style="width:80px" :min="1" :max="20" v-model="ldSearchData.minLevel" placeholder="1" clearable @change="handleSearchLD" controls-position="right" />&nbsp;{{ t('到') }}&nbsp;
+                <el-input-number style="width:80px" :min="1" :max="20" v-model="ldSearchData.maxLevel" placeholder="20" clearable @change="handleSearchLD" controls-position="right" />
+              </el-form-item>
+
+              <el-form-item v-if="isSuperJungle" :label="t('起始等级从')">
+                <el-input-number style="width:80px" :min="1" :max="20" v-model="ldSearchData.minOriginLevel" placeholder="1" clearable @change="handleSearchLD" controls-position="right" />&nbsp;{{ t('到') }}&nbsp;
+                <el-input-number style="width:80px" :min="1" :max="20" v-model="ldSearchData.maxOriginLevel" placeholder="20" clearable @change="handleSearchLD" controls-position="right" />
+              </el-form-item>
+
+              <el-form-item :label="`${t('售价')} ≥`">
+                <el-input-number style="width:80px" v-model="ldSearchData.minSellPrice" placeholder="0" clearable @change="handleSearchLD" :controls="false" />&nbsp;M
+              </el-form-item>
+
+              <el-form-item :label="`${t('物品等级')} ≥`">
+                <el-input-number style="width:80px" v-model="ldSearchData.minItemLevel" placeholder="0" clearable @change="handleSearchLD" :controls="false" />
+              </el-form-item>
+
+              <el-form-item :label="`${t('物品等级')} ≤`">
+                <el-input-number style="width:80px" v-model="ldSearchData.maxItemLevel" placeholder="" clearable @change="handleSearchLD" :controls="false" />
+              </el-form-item>
+
+              <el-form-item :label="`${t('风险')} ≤`">
+                <el-input-number style="width:80px" v-model="ldSearchData.maxRisk" clearable @change="handleSearchLD" :controls="false" />
+              </el-form-item>
+
+              <el-form-item v-if="!isSuperJungle">
+                <el-checkbox v-model="ldSearchData.bestManufacture" @change="handleSearchLD">
+                  {{ t('最佳制作方案') }}
+                </el-checkbox>
+              </el-form-item>
+
+              <el-form-item>
+                <el-checkbox v-model="ldSearchData.banCharm" @change="handleSearchLD">
+                  {{ t('排除护符') }}
+                </el-checkbox>
+              </el-form-item>
+
+              <el-form-item :label="t('装备筛选')">
+                <el-radio-group
+                  :model-value="getEquipmentFilterMode()"
+                  @change="handleEquipmentFilterModeChange"
+                  size="small"
+                  class="filter-segment"
+                >
+                  <el-radio-button label="all">
+                    {{ t('全部') }}
+                  </el-radio-button>
+                  <el-radio-button label="skilling">
+                    {{ t('只看生活装备') }}
+                  </el-radio-button>
+                  <el-radio-button label="combat">
+                    {{ t('只看战斗装备') }}
+                  </el-radio-button>
+                </el-radio-group>
+              </el-form-item>
+
+              <el-form-item v-if="ldSearchData.onlySkillingEquipment" :label="t('生活细分')">
+                <el-radio-group
+                  :model-value="getSkillingSubFilterMode()"
+                  @change="handleSkillingSubFilterModeChange"
+                  size="small"
+                  class="filter-segment"
+                >
+                  <el-radio-button label="all">
+                    {{ t('全部') }}
+                  </el-radio-button>
+                  <el-radio-button label="tool">
+                    {{ t('只看工具') }}
+                  </el-radio-button>
+                  <el-radio-button label="gear">
+                    {{ t('只看装备') }}
+                  </el-radio-button>
+                </el-radio-group>
+              </el-form-item>
+            </el-form>
+          </template>
+          <template #default>
+            <!-- 数据表格 -->
+            <el-table :data="leaderboardData" v-loading="loadingLD" @sort-change="handleSortLD">
+              <el-table-column width="54">
+                <template #default="{ row }">
+                  <ItemIcon :hrid="row.hrid" />
+                </template>
+              </el-table-column>
+              <el-table-column prop="result.name" :label="t('物品')" />
+              <el-table-column min-width="70">
+                <template #default="{ row }">
+                  <div style="display:flex;">
+                    <ItemIcon v-if="row.calculatorList && row.calculatorList[row.calculatorList.length - 1].protectLevel < row.calculatorList[row.calculatorList.length - 1].enhanceLevel" :hrid="row.calculatorList[row.calculatorList.length - 1].protectionItem.hrid" />
+                    <ItemIcon v-if=" row.protectLevel < row.enhanceLevel" :hrid="row.protectionItem.hrid" />
+                    <ItemIcon v-if="row.catalyst" :hrid="`/items/${row.catalyst}`" />
+                  </div>
+                  <div v-if="row.calculatorList && row.calculatorList[row.calculatorList.length - 1].protectLevel < row.calculatorList[row.calculatorList.length - 1].enhanceLevel">
+                    {{ t('从{0}保护', [row.calculatorList[row.calculatorList.length - 1].protectLevel]) }}
+                  </div>
+
+                  <div v-if="row.protectLevel < row.enhanceLevel">
+                    {{ t('从{0}保护', [row.protectLevel]) }}
+                  </div>
+                </template>
+              </el-table-column>
+              <el-table-column prop="project" :label="t('动作')" />
+
+              <el-table-column prop="result.profitPH" :label="t('利润 / h')" align="center" min-width="120" sortable="custom" :sort-orders="['ascending', null]">
+                <template #default="{ row }">
+                  <span :class="row.hasManualPrice ? 'manual' : ''">
+                    {{ row.result.profitPHFormat }}&nbsp;
+                  </span>
+                  <el-link type="primary" :icon="Edit" @click="setPrice(row)">
+                    {{ t('自定义') }}
+                  </el-link>
+                </template>
+              </el-table-column>
+
+              <el-table-column :label="t('损耗 / h')" align="center">
+                <template #default="{ row }">
+                  {{ row.result.cost4EnhancePHFormat }}
+                </template>
+              </el-table-column>
+              <el-table-column align="center" min-width="120">
+                <template #header>
+                  <div style="display: flex; justify-content: center; align-items: center; gap: 5px">
+                    <div>{{ t('风险系数') }}</div>
+                    <el-tooltip placement="top" effect="light">
+                      <template #content>
+                        {{ t('损耗 ÷ 利润') }}
+                      </template>
+                      <el-icon>
+                        <Warning />
+                      </el-icon>
+                    </el-tooltip>
+                  </div>
+                </template>
+                <template #default="{ row }">
+                  <!-- 7以上是红色，5以下是绿色 -->
+                  <span
+                    :class="{
+                      error: row.result.risk > 7,
+                      success: row.result.risk < 5,
+                    }"
+                  >
+                    {{ row.result.profitPH > 0 ? row.result.riskFormat : '' }}
+                  </span>
+                </template>
+              </el-table-column>
+              <el-table-column prop="result.profitRate" align="center" :label="t('利润率')" sortable="custom" :sort-orders="['descending', null]">
+                <template #default="{ row }">
+                  <span :class="row.hasManualPrice ? 'manual' : ''">
+                    {{ row.result.profitRateFormat }}&nbsp;
+                  </span>
+                </template>
+              </el-table-column>
+              <el-table-column align="center" min-width="120">
+                <template #header>
+                  <div style="display: flex; justify-content: center; align-items: center; gap: 5px">
+                    <div>{{ t('利润 / 次') }}</div>
+                    <el-tooltip placement="top" effect="light">
+                      <template #content>
+                        {{ t('单次动作产生的利润。') }}
+                        <br>
+                        {{ t('#多步动作利润提示') }}
+                        <br>
+                        {{ t('#多步动作利润举例') }}
+                      </template>
+                      <el-icon>
+                        <Warning />
+                      </el-icon>
+                    </el-tooltip>
+                  </div>
+                </template>
+                <template #default="{ row }">
+                  <span :class="row.hasManualPrice ? 'manual' : ''">
+                    {{ row.result.profitPPFormat }}&nbsp;
+                  </span>
+                </template>
+              </el-table-column>
+              <el-table-column :label="t('售价')" align="center">
+                <template #default="{ row }">
+                  <span>
+                    {{ Format.price(row.calculator.productListWithPrice[0].price) }}
+                  </span>
+                </template>
+              </el-table-column>
+
+              <el-table-column :label="t('成交量(1h)')" align="center" min-width="120">
+                <template #default="{ row }">
+                  {{ formatVolume1h(row) }}
+                </template>
+              </el-table-column>
+
+              <el-table-column :label="t('期望耗时')" align="center" min-width="110">
+                <template #default="{ row }">
+                  {{ formatExpectedTime(row) }}
+                </template>
+              </el-table-column>
+
+              <el-table-column :label="t('到强化工具中查看')" align="center" min-width="140">
+                <template #default="{ row }">
+                  <el-link type="primary" @click="goToEnhancer(row)">
+                    {{ t('到强化工具中查看') }}
+                  </el-link>
+                </template>
+              </el-table-column>
+
+              <!-- <el-table-column :label="t('时效')" align="center">
+                <template #header>
+                  <div style="display: flex; justify-content: center; align-items: center; gap: 5px">
+                    <div>{{ t('时效') }}</div>
+                    <el-tooltip placement="top" effect="light">
+                      <template #content>
+                        {{ t('收单市场时间距离现在多久') }}
+                      </template>
+                      <el-icon>
+                        <Warning />
+                      </el-icon>
+                    </el-tooltip>
+                  </div>
+                </template>
+                <template #default="{ row }">
+                  <el-tooltip placement="top" effect="light">
+                    <template #content>
+                      {{ t('市场时间') }}: {{ new Date(row.calculator.productListWithPrice[0].marketTime * 1000).toLocaleString() }}
+                    </template>
+                    <span>
+                      {{ Format.number((new Date().getTime() - row.calculator.productListWithPrice[0].marketTime * 1000) / (1000 * 60 * 60), 2) }}h
+                    </span>
+                  </el-tooltip>
+                </template>
+              </el-table-column> -->
+              <el-table-column prop="result.expPH" min-width="120" :label="t('经验 / h')" align="center" sortable="custom" :sort-orders="['descending', null]">
+                <template #default="{ row }">
+                  <div style="display: flex; justify-content: center; align-items: center; gap: 5px">
+                    <div>{{ row.result.expPHFormat }}</div>
+                    <el-tooltip v-if="row.expList?.length > 1" placement="top" effect="light">
+                      <template #content>
+                        <div v-for="(item, i) in row.expList" :key="i" style="display: flex; gap:10px">
+                          <div>
+                            {{ t(item.action) }}
+                          </div>
+                          <div>
+                            {{ item.expPHFormat }}
+                          </div>
+                        </div>
+                      </template>
+                      <el-icon>
+                        <Warning />
+                      </el-icon>
+                    </el-tooltip>
+                  </div>
+                </template>
+              </el-table-column>
+              <el-table-column :label="t('详情')" align="center">
+                <template #default="{ row }">
+                  <el-link type="primary" :icon="Search" @click="showDetail(row)">
+                    {{ t('查看') }}
+                  </el-link>
+                </template>
+              </el-table-column>
+            </el-table>
+          </template>
+          <template #footer>
+            <div class="pager-wrapper">
+              <el-pagination
+                background
+                :layout="paginationDataLD.layout"
+                :page-sizes="paginationDataLD.pageSizes"
+                :total="paginationDataLD.total"
+                :page-size="paginationDataLD.pageSize"
+                :current-page="paginationDataLD.currentPage"
+                @size-change="handleSizeChangeLD"
+                @current-change="handleCurrentChangeLD"
+              />
+            </div>
+          </template>
+        </el-card>
+      </el-col>
+
+      <el-col :xs="24" :sm="24" :md="24" :lg="24" :xl="8">
+        <ManualPriceCard :memory-key="manualPriceMemoryKey" />
+      </el-col>
+    </el-row>
+    <ActionDetail v-model="detailVisible" :data="currentRow" />
+
+    <ActionPrice v-model="priceVisible" :data="currentPriceRow" />
+  </div>
+</template>
+
+<style lang="scss" scoped>
+.error {
+  color: #f56c6c;
+}
+.success {
+  color: #67c23a;
+}
+.rank-card {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  .title {
+    width: 160px;
+    margin-bottom: 12px;
+  }
+}
+
+.calculation-loading {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  min-height: 350px;
+  background: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%);
+  border-radius: 12px;
+  margin: 20px 0;
+
+  .loading-content {
+    text-align: center;
+    padding: 40px;
+    max-width: 400px;
+
+    .loading-icon {
+      font-size: 56px;
+      color: #409eff;
+      margin-bottom: 24px;
+      animation: rotate 2s linear infinite;
+    }
+
+    .loading-title {
+      font-size: 20px;
+      font-weight: 600;
+      color: #303133;
+      margin-bottom: 20px;
+    }
+
+    .loading-tips {
+      font-size: 14px;
+      color: #606266;
+      line-height: 1.8;
+      text-align: left;
+
+      div {
+        margin-bottom: 8px;
+        padding-left: 8px;
+      }
+    }
+  }
+}
+
+@keyframes rotate {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+.pager-wrapper {
+  display: flex;
+  justify-content: center;
+}
+
+.row {
+  .el-col {
+    margin-bottom: 20px;
+  }
+}
+// 蓝色
+.manual {
+  color: #409eff;
+}
+
+.filter-segment {
+  :deep(.el-radio-button__inner) {
+    min-width: 74px;
+    border-radius: 999px;
+  }
+}
+</style>
