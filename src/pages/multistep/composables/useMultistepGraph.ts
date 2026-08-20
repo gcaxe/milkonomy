@@ -64,12 +64,13 @@ export function useMultistepGraph() {
   /** 缓存解析结果避免重复计算（key = nodeId + 配方参数） */
   const recipeCache = new Map<string, { inputs: { hrid: string, auto: boolean }[], outputs: string[] }>()
   function resolveFuncRecipe(n: GraphNode) {
-    if (!isFuncResolved(n)) return { inputs: [], outputs: [] }
-    const key = `${n.id}-${n.actionHrid}-${n.catalystRank ?? 0}-${n.mainItemHrid ?? ""}`
+    if (!isFuncResolved(n) || !n.actionHrid) return { inputs: [], outputs: [] }
+    const actionHrid = n.actionHrid
+    const key = `${n.id}-${actionHrid}-${n.catalystRank ?? 0}-${n.mainItemHrid ?? ""}`
     if (!recipeCache.has(key)) {
       recipeCache.set(key, n.funcClass === "A"
-        ? resolveRecipeA(n.actionHrid)
-        : resolveRecipeB(n.mainItemHrid!, n.actionHrid.split("/").pop() as any, n.catalystRank ?? 0))
+        ? resolveRecipeA(actionHrid)
+        : resolveRecipeB(n.mainItemHrid!, actionHrid.split("/").pop() as any, n.catalystRank ?? 0))
     }
     return recipeCache.get(key)!
   }

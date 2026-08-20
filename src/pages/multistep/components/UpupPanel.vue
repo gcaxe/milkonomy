@@ -62,7 +62,7 @@ const summary = computed(() => props.graph.summary.value)
       <!-- 选择前不渲染图标；选择后显示物品图标 -->
       <ItemIcon v-if="row.hrid" :hrid="row.hrid" :width="28" :height="28" />
       <el-select
-        :model-value="row.hrid"
+        :model-value="row.hrid ?? undefined"
         :placeholder="t('请选择物品')"
         filterable
         style="width: 320px"

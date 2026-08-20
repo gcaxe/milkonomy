@@ -4,7 +4,7 @@ import { Close, StarFilled } from "@element-plus/icons-vue"
 import ItemIcon from "@@/components/ItemIcon/index.vue"
 import { getItemDetailOf } from "@/common/apis/game"
 import { getTrans } from "@/locales"
-import type { AlchemyActionKey } from "../../utils/recipes"
+import type { AlchemyActionKey } from "../utils/recipes"
 import type { GraphNode, GraphPin } from "../types"
 
 const props = defineProps<{
