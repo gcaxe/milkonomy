@@ -57,6 +57,23 @@ export const publicRoutes: RouteRecordRaw[] = [
   {
     path: "/",
     component: Layouts,
+    redirect: "/multistep",
+    children: [
+      {
+        path: "multistep",
+        component: () => import("@/pages/multistep/index.vue"),
+        name: "Multistep",
+        meta: {
+          title: t("多步结点图"),
+          elIcon: "Share",
+          affix: true
+        }
+      }
+    ]
+  },
+  {
+    path: "/",
+    component: Layouts,
     redirect: "/enhancer",
     children: [
       {
