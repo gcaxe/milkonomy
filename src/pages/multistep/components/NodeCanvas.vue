@@ -1,8 +1,9 @@
 <script lang="ts" setup>
-import { reactive, ref, watchEffect } from "vue"
+import { computed, reactive, ref, watchEffect } from "vue"
 import { ElMessage } from "element-plus"
 import type { useMultistepGraph } from "../composables/useMultistepGraph"
 import type { GraphNode } from "../types"
+import { getTradableItemOptions } from "../utils/items"
 import GraphNodeComp from "./GraphNode.vue"
 import PurpleNode from "./PurpleNode.vue"
 
@@ -11,6 +12,16 @@ const props = defineProps<{ graph: ReturnType<typeof useMultistepGraph> }>()
 const wrapRef = ref<HTMLElement>()
 // 滚动时强制重算连线锚点
 const scrollTick = ref(0)
+
+// 红节点内选择物品的选项（与 [上部] 共用同一来源）
+const itemOptions = computed(() => getTradableItemOptions())
+
+// 「不显示平凡产物」：过滤隐藏节点与其连线
+const hiddenNodeIds = computed(() => props.graph.hiddenMundaneIds.value)
+const visibleWires = computed(() => props.graph.wires.value.filter(w =>
+  !hiddenNodeIds.value.has(w.fromPinId.split(":")[0]) && !hiddenNodeIds.value.has(w.toPinId.split(":")[0])))
+const visibleVarNodes = computed(() => props.graph.nodes.value.filter(n => n.kind === "var" && !hiddenNodeIds.value.has(n.id)))
+const visibleFuncNodes = computed(() => props.graph.nodes.value.filter(n => n.kind === "func"))
 
 // —— 坐标换算：client → 画布（未缩放）坐标 ——
 function clientToCanvas(x: number, y: number) {
@@ -22,14 +33,61 @@ function clientToCanvas(x: number, y: number) {
   }
 }
 
-// —— 节点拖动（指针捕获实现，不引入任何拖拽库） ——
+// —— 框选 ——
+const selecting = ref<{ x1: number, y1: number, x2: number, y2: number } | null>(null)
+const selectedIds = ref<string[]>([])
+
+/** 节点与框选矩形的相交判定（按节点近似尺寸） */
+function intersectsSelection(n: GraphNode, r: { x1: number, y1: number, x2: number, y2: number }) {
+  const w = n.kind === "func" ? 260 : 220
+  const h = 110
+  return n.x + w >= r.x1 && n.x <= r.x2 && n.y + h >= r.y1 && n.y <= r.y2
+}
+
+/** 画布空白处按下：开始框选（点在节点/pin/线上则忽略） */
+function onCanvasPointerDown(ev: PointerEvent) {
+  const target = ev.target as HTMLElement
+  if (target.closest(".graph-node, .func-node, .pin, .el-select, .el-button, .wire-hit, .el-input")) return
+  const start = clientToCanvas(ev.clientX, ev.clientY)
+  selecting.value = { x1: start.x, y1: start.y, x2: start.x, y2: start.y }
+  const onMove = (e: PointerEvent) => {
+    const pos = clientToCanvas(e.clientX, e.clientY)
+    selecting.value = {
+      x1: Math.min(start.x, pos.x), y1: Math.min(start.y, pos.y),
+      x2: Math.max(start.x, pos.x), y2: Math.max(start.y, pos.y)
+    }
+  }
+  const onUp = () => {
+    const rect = selecting.value
+    if (rect) {
+      const hit = props.graph.nodes.value.filter(n => intersectsSelection(n, rect))
+      // 框选太小（相当于点击空白）→ 清空选择
+      selectedIds.value = (rect.x2 - rect.x1 < 5 && rect.y2 - rect.y1 < 5) ? [] : hit.map(n => n.id)
+    }
+    selecting.value = null
+    window.removeEventListener("pointermove", onMove)
+    window.removeEventListener("pointerup", onUp)
+  }
+  window.addEventListener("pointermove", onMove)
+  window.addEventListener("pointerup", onUp)
+}
+
+// —— 节点拖动（指针捕获实现；选中多节点时整体移动，连线按 pin 自动跟随不断开） ——
 function onDragStart(node: GraphNode, ev: PointerEvent) {
   const startX = ev.clientX, startY = ev.clientY
-  const originX = node.x, originY = node.y
   const zoom = props.graph.zoom.value
+  // 未框选的节点单独拖动时，只移动它自己
+  const moving = selectedIds.value.includes(node.id)
+    ? props.graph.nodes.value.filter(n => selectedIds.value.includes(n.id))
+    : (selectedIds.value = [node.id], [node])
+  const origins = moving.map(n => ({ n, ox: n.x, oy: n.y }))
   const onMove = (e: PointerEvent) => {
-    node.x = originX + (e.clientX - startX) / zoom
-    node.y = originY + (e.clientY - startY) / zoom
+    const dx = (e.clientX - startX) / zoom
+    const dy = (e.clientY - startY) / zoom
+    for (const { n, ox, oy } of origins) {
+      n.x = ox + dx
+      n.y = oy + dy
+    }
   }
   const onUp = () => {
     window.removeEventListener("pointermove", onMove)
@@ -112,10 +170,11 @@ function wirePath(from: { x: number, y: number }, to: { x: number, y: number }) 
         height: `${graph.canvasSize.value.height}px`,
         transform: `scale(${graph.zoom.value})`
       }"
+      @pointerdown="onCanvasPointerDown"
     >
       <svg class="edges">
         <!-- 已存在连线：单击删除 -->
-        <g v-for="w in graph.wires.value" :key="w.id" class="wire-group">
+        <g v-for="w in visibleWires" :key="w.id" class="wire-group">
           <path :d="wirePath(pinAnchor(w.fromPinId), pinAnchor(w.toPinId))" fill="none"
                 stroke="var(--el-border-color-darker)" stroke-width="2" class="wire-path" />
           <path :d="wirePath(pinAnchor(w.fromPinId), pinAnchor(w.toPinId))" fill="none"
@@ -126,20 +185,34 @@ function wirePath(from: { x: number, y: number }, to: { x: number, y: number }) 
               fill="none" stroke="#ffd04b" stroke-width="2" stroke-dasharray="6 4" />
       </svg>
 
+      <!-- 框选矩形 -->
+      <div
+        v-if="selecting"
+        class="selection-rect"
+        :style="{
+          left: `${selecting.x1}px`, top: `${selecting.y1}px`,
+          width: `${selecting.x2 - selecting.x1}px`, height: `${selecting.y2 - selecting.y1}px`
+        }"
+      />
+
       <GraphNodeComp
-        v-for="n in graph.nodes.value.filter(x => x.kind === 'var')"
+        v-for="n in visibleVarNodes"
         :key="n.id"
         :node="n"
+        :class="{ selected: selectedIds.includes(n.id) }"
         :result="graph.nodeResults.value.get(n.id) ?? null"
         :gather-actions="graph.getGatherActionsOf(n.hrid)"
+        :item-options="itemOptions"
         @drag-start="onDragStart"
         @pin-drag-start="onPinDragStart"
         @delete="(n) => graph.deleteNode(n.id)"
+        @set-item="(n, hrid) => graph.setRowItem(n.rowUid!, hrid)"
       />
       <PurpleNode
-        v-for="n in graph.nodes.value.filter(x => x.kind === 'func')"
+        v-for="n in visibleFuncNodes"
         :key="n.id"
         :node="n"
+        :class="{ selected: selectedIds.includes(n.id) }"
         :pins="graph.pins.value.filter(p => p.nodeId === n.id)"
         :alchemy-options="n.mainItemHrid ? graph.getAlchemyActionOptionsOf(n.mainItemHrid) : []"
         :result="graph.nodeResults.value.get(n.id) ?? null"
@@ -176,4 +249,15 @@ function wirePath(from: { x: number, y: number }, to: { x: number, y: number }) 
 }
 .wire-hit { pointer-events: all; cursor: pointer; }
 .wire-group:hover .wire-path { stroke: #ffd04b; stroke-width: 3; }
+.selection-rect {
+  position: absolute;
+  border: 1px dashed #ffd04b;
+  background: rgba(255, 208, 75, 0.08);
+  pointer-events: none;
+  z-index: 10;
+}
+:deep(.selected) {
+  outline: 2px solid #ffd04b;
+  outline-offset: 2px;
+}
 </style>

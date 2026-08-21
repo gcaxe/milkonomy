@@ -91,6 +91,32 @@ export function resolveRecipeA(actionHrid: string): ResolvedRecipe {
   return { inputs, outputs }
 }
 
+/**
+ * 平凡产物：本处理方式的精华掉落 + 稀有掉落（大中小工匠匣/宝箱/陨石仓、
+ * 专精之线/精通之油/洞察之枝等）。可被「不显示平凡产物」隐藏，利润照常计算。
+ */
+export function getMundaneProductHridsOf(node: { funcClass?: string, actionHrid?: string, mainItemHrid?: string }): string[] {
+  if (!node.actionHrid) return []
+  if (node.funcClass === "A") {
+    const detail = getActionDetailOf(node.actionHrid)
+    return [
+      ...(detail.essenceDropTable || []).map(d => d.itemHrid),
+      ...(detail.rareDropTable || []).map(d => d.itemHrid)
+    ]
+  }
+  // B 类：稀有掉落与炼金精华按物品等级/耗时动态生成（与 resolveRecipeB 同源）
+  const item = getGameDataApi().itemDetailMap[node.mainItemHrid ?? ""]
+  if (!item) return []
+  const actionKey = node.actionHrid.split("/").pop() as AlchemyActionKey
+  const timeCost = actionKey === "transmute"
+    ? getTransmuteTimeCost()
+    : actionKey === "decompose" ? getDecomposeTimeCost() : getCoinifyTimeCost()
+  return [
+    ...getAlchemyRareDropTable(item, timeCost).map(d => d.itemHrid),
+    ...getAlchemyEssenceDropTable(item, timeCost).map(d => d.itemHrid)
+  ]
+}
+
 /** 解析 B 类配方：主原料 + 炼金动作 + 催化剂等级 */
 export function resolveRecipeB(mainItemHrid: string, actionKey: AlchemyActionKey, catalystRank: 0 | 1 | 2): ResolvedRecipe {
   const item = getGameDataApi().itemDetailMap[mainItemHrid]

@@ -12,11 +12,14 @@ const props = defineProps<{
   result?: NodeCalcResult | null
   /** 该物品可用的三采集动作（空=只能购买） */
   gatherActions: string[]
+  /** 可选物品列表（红节点内选择物品用） */
+  itemOptions: { hrid: string, label: string }[]
 }>()
 const emit = defineEmits<{
   (e: "drag-start", node: GraphNode, ev: PointerEvent): void
   (e: "pin-drag-start", pinId: string, ev: PointerEvent): void
   (e: "delete", node: GraphNode): void
+  (e: "set-item", node: GraphNode, hrid: string): void
 }>()
 const { t } = useI18n()
 
@@ -64,6 +67,24 @@ function onPinPointerDown(pinId: string, ev: PointerEvent) {
         @click.stop="emit('delete', node)"
       />
     </div>
+
+    <!-- 红节点：直接在这里选择物品（与 [上部] 行联动） -->
+    <el-select
+      v-if="node.varKind === 'red'"
+      :model-value="node.hrid || undefined"
+      :placeholder="t('请选择物品')"
+      filterable
+      size="small"
+      style="width: 100%; margin-top: 6px"
+      @update:model-value="(val: string | number | boolean | Record<string, unknown> | undefined) => emit('set-item', node, val as string)"
+    >
+      <el-option v-for="opt in itemOptions" :key="opt.hrid" :label="opt.label" :value="opt.hrid">
+        <div class="option-item">
+          <ItemIcon :hrid="opt.hrid" :width="20" :height="20" />
+          <span>{{ opt.label }}</span>
+        </div>
+      </el-option>
+    </el-select>
 
     <!-- 红节点：获取方式下拉（购买默认；有三采集动作时可选） -->
     <el-select
@@ -116,6 +137,7 @@ function onPinPointerDown(pinId: string, ev: PointerEvent) {
   .kind { font-size: 11px; color: var(--el-text-color-secondary); }
   .count { font-size: 12px; color: var(--el-text-color-secondary); }
   .del { color: #f56c6c; }
+  .option-item { display: flex; align-items: center; gap: 6px; }
   .metrics { margin-top: 6px; display: flex; flex-direction: column; gap: 2px; font-size: 12px; color: var(--el-text-color-secondary); }
   /* 引脚：上下居中圆点，悬停放大高亮 */
   .pin {

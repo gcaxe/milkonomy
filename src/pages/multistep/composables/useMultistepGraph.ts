@@ -1,8 +1,9 @@
 import { computed, ref, toRaw, watch } from "vue"
 import { ElMessage } from "element-plus"
-import { getTrans } from "@/locales"
+import locales, { getTrans } from "@/locales"
 import type { GraphNode, GraphPin, GraphWire, MultistepPlan, UpupItemRow } from "../types"
-import { findProducingActionOf, getAlchemyActionOptionsOf, getGatherActionsOf, resolveRecipeA, resolveRecipeB } from "../utils/recipes"
+import { findProducingActionOf, getAlchemyActionOptionsOf, getGatherActionsOf, getMundaneProductHridsOf, resolveRecipeA, resolveRecipeB } from "../utils/recipes"
+import { chooseRecipeDir, downloadRecipeJson, getSavedRecipeDir, isDirPickerAvailable, writeRecipeFile, type FSDirHandle } from "../utils/planStore"
 import { useMultistepCalc } from "./useMultistepCalc"
 
 let seq = 0
@@ -391,6 +392,8 @@ export function useMultistepGraph() {
   function layout() {
     const funcs = nodes.value.filter(n => n.kind === "func")
     const vars = nodes.value.filter(n => n.kind === "var")
+    // 隐藏的平凡产物不参与布局（位置由后续可见节点补上）
+    const visibleVars = vars.filter(v => !hiddenMundaneIds.value.has(v.id))
     // 紫节点：每行 4 个换行，避免超出可滚动区域
     funcs.forEach((f, i) => {
       if (!positions.value[f.id]) {
@@ -401,7 +404,7 @@ export function useMultistepGraph() {
         f.y = positions.value[f.id].y
       }
     })
-    for (const v of vars) {
+    for (const v of visibleVars) {
       // 手动拖过/手动放置的节点尊重其位置
       if (positions.value[v.id]) {
         v.x = positions.value[v.id].x
@@ -414,7 +417,7 @@ export function useMultistepGraph() {
       const consumer = consumerWire ? nodeById(pinById(consumerWire.toPinId)?.nodeId ?? "") : undefined
       if (producer && producer.kind === "func") {
         // 输出节点：位于其生产紫节点下方
-        const siblings = vars.filter(n => {
+        const siblings = visibleVars.filter(n => {
           const w = wires.value.find(x => x.toPinId === `${n.id}:in:main`)
           return w ? w.fromPinId.startsWith(`${producer.id}:`) : false
         })
@@ -423,7 +426,7 @@ export function useMultistepGraph() {
         v.y = producer.y + 200 + idx * LEVEL_H
       } else if (consumer && consumer.kind === "func") {
         // 输入节点：位于其消费紫节点上方
-        const siblings = vars.filter(n => {
+        const siblings = visibleVars.filter(n => {
           const w = wires.value.find(x => x.fromPinId === `${n.id}:out:main`)
           return w ? w.toPinId.startsWith(`${consumer.id}:`) : false
         })
@@ -432,7 +435,7 @@ export function useMultistepGraph() {
         v.y = consumer.y - 200 - idx * LEVEL_H
       } else {
         // 未连线红节点：最左列
-        const idx = vars
+        const idx = visibleVars
           .filter(n => !wires.value.some(w => w.fromPinId.startsWith(`${n.id}:`) || w.toPinId.startsWith(`${n.id}:`)))
           .indexOf(v)
         v.x = 40
@@ -454,6 +457,31 @@ export function useMultistepGraph() {
     }
     return { width: w, height: h }
   })
+
+  /** 不显示平凡产物（精华/箱子/专精之线等稀有掉落），默认关闭；隐藏不影响利润计算 */
+  const hideMundane = ref(false)
+  const mundaneHridByNode = computed(() => {
+    const map = new Map<string, string[]>()
+    for (const f of nodes.value) {
+      if (f.kind === "func" && isFuncResolved(f)) map.set(f.id, getMundaneProductHridsOf(f))
+    }
+    return map
+  })
+  /** 勾选后需要隐藏的绿色节点 id */
+  const hiddenMundaneIds = computed(() => {
+    const hidden = new Set<string>()
+    if (!hideMundane.value) return hidden
+    for (const g of nodes.value) {
+      if (g.kind !== "var" || g.varKind !== "green") continue
+      const producerWire = wires.value.find(w => w.toPinId === `${g.id}:in:main`)
+      const producer = producerWire ? nodeById(pinById(producerWire.fromPinId)?.nodeId ?? "") : undefined
+      if (producer && producer.kind === "func") {
+        const mundane = mundaneHridByNode.value.get(producer.id) || []
+        if (mundane.includes(g.hrid)) hidden.add(g.id)
+      }
+    }
+    return hidden
+  })
   function persistPositions() {
     const map: Record<string, { x: number, y: number }> = {}
     for (const n of nodes.value) map[n.id] = { x: n.x, y: n.y }
@@ -462,8 +490,47 @@ export function useMultistepGraph() {
   function resetLayout() { positions.value = {}; layout() }
   function zoomBy(delta: number) { zoom.value = Math.min(2, Math.max(0.2, zoom.value + delta)) }
 
-  /** 保存方案骨架 */
-  function savePlan() {
+  /** 清空全部节点与连线（含 [上部] 行与手动位置） */
+  function clearAll() {
+    nodes.value = []
+    wires.value = []
+    rows.value = []
+    positions.value = {}
+  }
+
+  /** 配方保存目录名（null=未选择） */
+  const saveDirName = ref<string | null>(null)
+  let saveDirHandle: FSDirHandle | null = null
+
+  /** 选择配方保存目录（之后所有配方都保存到该目录） */
+  async function chooseSaveDir() {
+    try {
+      const name = await chooseRecipeDir()
+      if (name) {
+        saveDirName.value = name
+        ElMessage.success(locales.global.t("已选择保存路径 {0}", [name]))
+        return
+      }
+      ElMessage.warning(getTrans("当前浏览器不支持选择目录，将改为下载文件"))
+    } catch (e) {
+      // 用户取消选择时静默处理
+      if ((e as DOMException)?.name !== "AbortError") {
+        console.error(e)
+        ElMessage.error(getTrans("选择保存路径失败"))
+      }
+    }
+  }
+
+  /** 尝试恢复上次的目录句柄（首次保存时调用） */
+  async function ensureSaveDir(): Promise<FSDirHandle | null> {
+    if (saveDirHandle) return saveDirHandle
+    saveDirHandle = await getSavedRecipeDir()
+    if (saveDirHandle) saveDirName.value = saveDirHandle.name
+    return saveDirHandle
+  }
+
+  /** 保存方案：全部节点与连线写入所选目录（不支持时回退下载文件） */
+  async function savePlan() {
     const plan: MultistepPlan = {
       name: planName.value || `方案 ${plans.value.length + 1}`,
       rows: toRaw(rows.value),
@@ -471,8 +538,36 @@ export function useMultistepGraph() {
       wires: toRaw(wires.value),
       savedAt: Date.now()
     }
+    const json = JSON.stringify(plan, null, 2)
+    // 同步更新内存中的同名方案
     const idx = plans.value.findIndex(p => p.name === plan.name)
     idx >= 0 ? (plans.value[idx] = plan) : plans.value.push(plan)
+    try {
+      let dir = await ensureSaveDir()
+      if (!dir && isDirPickerAvailable()) {
+        // 尚未选择过目录：先让用户选一次
+        const name = await chooseRecipeDir()
+        if (name) dir = await ensureSaveDir()
+      }
+      if (dir) {
+        await writeRecipeFile(dir, plan.name, json)
+        ElMessage.success(locales.global.t("已保存配方 {0}", [plan.name]))
+        return
+      }
+      // 浏览器不支持目录选择：回退为下载文件
+      downloadRecipeJson(plan.name, json)
+      ElMessage.success(locales.global.t("已下载配方 {0}", [plan.name]))
+    } catch (e) {
+      console.error(e)
+      ElMessage.error(getTrans("保存配方失败"))
+    }
+  }
+
+  /** 拖动 [上部] 行改变顺序（影响配平的"第一行"） */
+  function moveRow(fromIndex: number, toIndex: number) {
+    if (fromIndex < 0 || toIndex < 0 || fromIndex >= rows.value.length || toIndex >= rows.value.length) return
+    const [row] = rows.value.splice(fromIndex, 1)
+    rows.value.splice(toIndex, 0, row)
   }
 
   // 红节点数量与 [上部] 行保持同步
@@ -492,10 +587,12 @@ export function useMultistepGraph() {
 
   return {
     rows, planName, plans, nodes, wires, pins, zoom, canvasSize, summary, nodeResults,
+    hideMundane, hiddenMundaneIds,
+    saveDirName, chooseSaveDir, moveRow,
     pinById, nodeById, resolveFuncRecipe,
     addRow, setRowItem, removeRow, addFuncNode, deleteNode, deleteWire,
     tryConnect, resolveFuncB, mergeVarNodes, balance,
     getGatherActionsOf, getAlchemyActionOptionsOf, findProducingActionOf,
-    layout, persistPositions, resetLayout, zoomBy, savePlan
+    layout, persistPositions, resetLayout, zoomBy, savePlan, clearAll
   }
 }

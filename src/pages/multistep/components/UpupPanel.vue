@@ -1,25 +1,17 @@
 <script lang="ts" setup>
-import { computed } from "vue"
-import { Delete, Plus } from "@element-plus/icons-vue"
+import { computed, ref } from "vue"
+import { Delete, Plus, Rank } from "@element-plus/icons-vue"
 import ItemIcon from "@@/components/ItemIcon/index.vue"
-import { useGameStore } from "@/pinia/stores/game"
-import { getTrans } from "@/locales"
 import * as Format from "@@/utils/format"
 import type { useMultistepGraph } from "../composables/useMultistepGraph"
 import type { UpupItemRow } from "../types"
+import { getTradableItemOptions } from "../utils/items"
 
 const props = defineProps<{ graph: ReturnType<typeof useMultistepGraph> }>()
 const { t } = useI18n()
 
-// 下拉可选物品：全部可交易物品，按名称排序
-const itemOptions = computed(() => {
-  const gameData = useGameStore().gameData
-  if (!gameData) return []
-  return Object.values(gameData.itemDetailMap)
-    .filter(item => item.isTradable)
-    .map(item => ({ hrid: item.hrid, label: getTrans(item.name) }))
-    .sort((a, b) => a.label.localeCompare(b.label, "zh"))
-})
+// 下拉可选物品：与红节点内选择共用同一来源
+const itemOptions = computed(() => getTradableItemOptions())
 
 // 数量输入：只允许十进制正数（>=0），最多保留 3 位小数，非法输入回退为 0
 function onCountInput(row: UpupItemRow, val: number | undefined) {
@@ -29,6 +21,27 @@ function onCountInput(row: UpupItemRow, val: number | undefined) {
     return
   }
   row.count = Math.round(n * 1000) / 1000
+}
+
+// 行拖动排序（改变谁是"第一行"，即配平基准）
+const draggingIndex = ref<number | null>(null)
+const dragOverIndex = ref<number | null>(null)
+function onRowDragStart(index: number) {
+  draggingIndex.value = index
+}
+function onRowDragOver(index: number) {
+  if (draggingIndex.value != null && draggingIndex.value !== index) dragOverIndex.value = index
+}
+function onRowDrop(index: number) {
+  if (draggingIndex.value != null && draggingIndex.value !== index) {
+    props.graph.moveRow(draggingIndex.value, index)
+  }
+  draggingIndex.value = null
+  dragOverIndex.value = null
+}
+function onRowDragEnd() {
+  draggingIndex.value = null
+  dragOverIndex.value = null
 }
 
 const summary = computed(() => props.graph.summary.value)
@@ -51,13 +64,32 @@ const summary = computed(() => props.graph.summary.value)
             style="width: 220px"
             clearable
           />
+          <el-button plain :title="graph.saveDirName.value ?? ''" class="save-dir" @click="graph.chooseSaveDir()">
+            {{ graph.saveDirName.value ? t('保存路径：{0}', [graph.saveDirName.value]) : t('选择保存路径') }}
+          </el-button>
           <el-button type="primary" @click="graph.savePlan()">{{ t('保存当前步骤') }}</el-button>
         </div>
       </div>
     </template>
 
-    <!-- 4.2 起始物品行编辑器（允许同名物品，每行对应一个红节点） -->
-    <div v-for="(row, index) in graph.rows.value" :key="row.uid" class="upup-row">
+    <!-- 4.2 起始物品行编辑器（允许同名物品，每行对应一个红节点；最左侧手柄可拖动排序） -->
+    <div
+      v-for="(row, index) in graph.rows.value"
+      :key="row.uid"
+      class="upup-row"
+      :class="{ 'drag-over': dragOverIndex === index }"
+      @dragover.prevent="onRowDragOver(index)"
+      @drop.prevent="onRowDrop(index)"
+    >
+      <el-icon
+        class="drag-handle"
+        draggable="true"
+        :title="t('拖动排序')"
+        @dragstart="onRowDragStart(index)"
+        @dragend="onRowDragEnd"
+      >
+        <Rank />
+      </el-icon>
       <span class="row-index">{{ index + 1 }}</span>
       <!-- 选择前不渲染图标；选择后显示物品图标 -->
       <ItemIcon v-if="row.hrid" :hrid="row.hrid" :width="28" :height="28" />
@@ -91,7 +123,7 @@ const summary = computed(() => props.graph.summary.value)
         {{ t('添加物品') }}
       </el-button>
       <el-button :icon="Plus" plain type="warning" class="add-func" @click="graph.addFuncNode()">
-        {{ t('添加紫色节点') }}
+        {{ t('添加处理方式') }}
       </el-button>
     </div>
 
@@ -138,7 +170,10 @@ const summary = computed(() => props.graph.summary.value)
 .upup-title .title { font-weight: 600; font-size: 16px; }
 .upup-title .desc { color: var(--el-text-color-secondary); font-size: 12px; max-width: 640px; }
 .upup-plan { display: flex; gap: 8px; align-items: center; }
+.save-dir { max-width: 260px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .upup-row { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
+.drag-handle { cursor: grab; color: var(--el-text-color-secondary); }
+.upup-row.drag-over { outline: 1px dashed #ffd04b; border-radius: 6px; }
 .row-index { width: 16px; text-align: right; color: var(--el-text-color-secondary); }
 .option-item { display: flex; align-items: center; gap: 8px; }
 .row-tools { display: flex; gap: 10px; margin-bottom: 16px; }
