@@ -1,5 +1,5 @@
 <script lang="ts" setup>
-import { computed, reactive, ref, watchEffect } from "vue"
+import { computed, reactive, ref, watch, watchEffect } from "vue"
 import { ElMessage } from "element-plus"
 import type { useMultistepGraph } from "../composables/useMultistepGraph"
 import type { GraphNode } from "../types"
@@ -15,6 +15,18 @@ const scrollTick = ref(0)
 
 // 红节点内选择物品的选项（与 [上部] 共用同一来源）
 const itemOptions = computed(() => getTradableItemOptions())
+
+// [上部]「查看节点」：滚动视口使对应节点尽量居中
+watch(() => props.graph.focusTarget.value, (t) => {
+  if (!t || !wrapRef.value) return
+  const node = props.graph.nodes.value.find(n => n.id === t.nodeId)
+  if (!node) return
+  const wrap = wrapRef.value
+  const z = props.graph.zoom.value
+  const left = Math.max(0, (node.x + 110) * z - wrap.clientWidth / 2)
+  const top = Math.max(0, (node.y + 55) * z - wrap.clientHeight / 2)
+  wrap.scrollTo({ left, top, behavior: "smooth" })
+}, { flush: "post" })
 
 // 「不显示平凡产物」：过滤隐藏节点与其连线
 const hiddenNodeIds = computed(() => props.graph.hiddenMundaneIds.value)
@@ -105,8 +117,8 @@ const tempWire = ref<{ x1: number, y1: number, x2: number, y2: number } | null>(
 // 节点移动/滚动/缩放变化时自动重算，线实时跟随
 const anchors = reactive(new Map<string, { x: number, y: number }>())
 watchEffect(() => {
-  // 建立响应式依赖：节点坐标、连线集合、缩放、滚动
-  for (const n of props.graph.nodes.value) { void n.x; void n.y }
+  // 建立响应式依赖：节点坐标/三角 pin 标记、连线集合、缩放、滚动
+  for (const n of props.graph.nodes.value) { void n.x; void n.y; void n.triIn; void n.triOut }
   void props.graph.wires.value.length
   void props.graph.zoom.value
   void scrollTick.value
@@ -146,6 +158,8 @@ function onPinDragStart(pinId: string, ev: PointerEvent) {
       const err = props.graph.tryConnect(pinId, targetPinId)
       err && ElMessage.error(err)
     }
+    // 结构变化后强制重算锚点表：保证新线（含三角回流线）在 pin 渲染进 DOM 后立即显示
+    scrollTick.value++
     tempWire.value = null
     window.removeEventListener("pointermove", onMove)
     window.removeEventListener("pointerup", onUp)
@@ -219,8 +233,8 @@ function wirePath(from: { x: number, y: number }, to: { x: number, y: number }) 
         @drag-start="onDragStart"
         @pin-drag-start="onPinDragStart"
         @set-class="(node, cls) => node.funcClass = cls"
-        @set-action="(node, key) => { node.actionHrid = `/actions/alchemy/${key}`; graph.resolveFuncB(node) }"
-        @set-catalyst="(node, rank) => { node.catalystRank = rank; graph.resolveFuncB(node) }"
+        @set-action="(node, key) => { node.actionHrid = `/actions/alchemy/${key}`; graph.onFuncConfigChange(node) }"
+        @set-catalyst="(node, rank) => { node.catalystRank = rank; graph.onFuncConfigChange(node) }"
         @delete="(n) => graph.deleteNode(n.id)"
       />
     </div>

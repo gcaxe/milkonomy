@@ -83,8 +83,10 @@ function onClearAll() {
       <template #header>
         <span class="title">{{ t('使用指南') }}</span>
       </template>
-      <div>{{ t('连完线后，点击自动配平') }}</div>
-      <div>{{ t('平凡产物是该行动的精华、箱子类物品、精通之油类物品，但利润还是正常算。') }}</div>
+      <div class="guide-line">{{ t('本界面不提供任何推荐功能，只提供模拟功能') }}</div>
+      <div class="guide-line">{{ t('连完线后，点击自动配平') }}</div>
+      <div class="guide-line">{{ t('平凡产物是该行动的精华、箱子类物品、精通之油类物品，但利润还是正常算。') }}</div>
+      <div class="guide-line">{{ t('绿色节点可以与红色节点相连，非环则合并，形成环则会有限递归计算') }}</div>
     </el-card>
   </div>
 </template>
@@ -135,7 +137,7 @@ function onClearAll() {
   position: absolute;
   /* 位于卡片头部下方，避免遮挡标题与图例；右移留出滚动条宽度 */
   top: 76px;
-  right: 32px;
+  right: 48px;
   z-index: 3200;
   display: flex;
   gap: 8px;
@@ -149,4 +151,10 @@ function onClearAll() {
   background: rgba(168, 85, 247, 0.08);
   color: #a855f7;
 }
+.purple-btn:hover {
+  background: rgba(168, 85, 247, 0.25);
+  border-color: #a855f7;
+  color: #a855f7;
+}
+.guide-line + .guide-line { margin-top: 1em; }
 </style>

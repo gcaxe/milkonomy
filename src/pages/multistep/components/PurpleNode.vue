@@ -107,10 +107,10 @@ const kindLabel = computed(() => props.node.funcClass === "A" ? t("非炼金") :
       <el-option :label="t('炼金')" value="B" />
     </el-select>
 
-    <!-- 第二个下拉：非炼金恒暗（未选择炼金）；炼金主原料确立后亮（点金/分解/转化） -->
+    <!-- 第二个下拉：非炼金恒暗（未选择炼金）；炼金解析后仍可切换（点金/分解/转化） -->
     <el-select
       v-model="actionValue"
-      :disabled="!isB || !node.mainItemHrid || isResolved"
+      :disabled="!isB || !node.mainItemHrid || (isResolved && !isB)"
       size="small"
       :placeholder="isB ? t('请选择炼金动作') : t('未选择炼金')"
       style="width: 100%; margin-top: 6px"
@@ -118,10 +118,10 @@ const kindLabel = computed(() => props.node.funcClass === "A" ? t("非炼金") :
       <el-option v-for="opt in actionOptions" :key="opt.key" :label="t(opt.key === 'coinify' ? '点金' : opt.key === 'decompose' ? '分解' : '转化')" :value="opt.key" />
     </el-select>
 
-    <!-- 第三个下拉：非炼金恒暗（无）；炼金动作选定后亮（催化剂） -->
+    <!-- 第三个下拉：非炼金恒暗（无）；炼金解析后仍可切换（催化剂） -->
     <el-select
       v-model="catalystValue"
-      :disabled="!isB || !node.mainItemHrid || isResolved"
+      :disabled="!isB || !node.mainItemHrid || (isResolved && !isB)"
       size="small"
       :placeholder="isB ? t('未选择催化剂') : t('无')"
       style="width: 100%; margin-top: 6px"

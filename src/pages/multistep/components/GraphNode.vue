@@ -42,13 +42,22 @@ function onPinPointerDown(pinId: string, ev: PointerEvent) {
     :style="{ left: `${node.x}px`, top: `${node.y}px` }"
     @pointerdown="emit('drag-start', node, $event)"
   >
-    <!-- 输入 pin（上） -->
-    <div
-      class="pin in"
-      :data-pin-id="`${node.id}:in:main`"
-      :title="t('输入引脚')"
-      @pointerdown="onPinPointerDown(`${node.id}:in:main`, $event)"
-    />
+    <!-- 输入 pin 排（上）：圆形主输入 + 可选三角回流输入 -->
+    <div class="pin-row in">
+      <div
+        class="pin"
+        :data-pin-id="`${node.id}:in:main`"
+        :title="t('输入引脚')"
+        @pointerdown="onPinPointerDown(`${node.id}:in:main`, $event)"
+      />
+      <div
+        v-if="node.triIn"
+        class="pin triangle"
+        :data-pin-id="`${node.id}:in:tri`"
+        :title="t('循环回流输入')"
+        @pointerdown="onPinPointerDown(`${node.id}:in:tri`, $event)"
+      />
+    </div>
 
     <div class="head">
       <ItemIcon v-if="node.hrid" :hrid="node.hrid" :width="26" :height="26" />
@@ -108,13 +117,22 @@ function onPinPointerDown(pinId: string, ev: PointerEvent) {
       </template>
     </div>
 
-    <!-- 输出 pin（下） -->
-    <div
-      class="pin out"
-      :data-pin-id="`${node.id}:out:main`"
-      :title="t('输出引脚')"
-      @pointerdown="onPinPointerDown(`${node.id}:out:main`, $event)"
-    />
+    <!-- 输出 pin 排（下）：可选三角回流出端 + 圆形主输出 -->
+    <div class="pin-row out">
+      <div
+        v-if="node.triOut"
+        class="pin triangle"
+        :data-pin-id="`${node.id}:out:tri`"
+        :title="t('循环回流出端')"
+        @pointerdown="onPinPointerDown(`${node.id}:out:tri`, $event)"
+      />
+      <div
+        class="pin"
+        :data-pin-id="`${node.id}:out:main`"
+        :title="t('输出引脚')"
+        @pointerdown="onPinPointerDown(`${node.id}:out:main`, $event)"
+      />
+    </div>
   </div>
 </template>
 
@@ -139,20 +157,28 @@ function onPinPointerDown(pinId: string, ev: PointerEvent) {
   .del { color: #f56c6c; }
   .option-item { display: flex; align-items: center; gap: 6px; }
   .metrics { margin-top: 6px; display: flex; flex-direction: column; gap: 2px; font-size: 12px; color: var(--el-text-color-secondary); }
-  /* 引脚：上下居中圆点，悬停放大高亮 */
-  .pin {
+  /* 引脚排：上下居中，悬停放大高亮 */
+  .pin-row {
     position: absolute;
     left: 50%;
+    transform: translateX(-50%);
+    display: flex;
+    gap: 8px;
+    z-index: 1;
+    &.in { top: -8px; }
+    &.out { bottom: -8px; }
+  }
+  .pin {
     width: 14px; height: 14px;
-    margin-left: -7px;
     border-radius: 50%;
     border: 2px solid var(--el-border-color-darker);
     background: #fff;
     cursor: crosshair;
-    z-index: 1;
-    &.in { top: -8px; }
-    &.out { bottom: -8px; }
     &:hover { transform: scale(1.4); border-color: #ffd04b; }
+    &.triangle {
+      border-radius: 0;
+      clip-path: polygon(50% 0, 100% 100%, 0 100%);
+    }
   }
 }
 </style>

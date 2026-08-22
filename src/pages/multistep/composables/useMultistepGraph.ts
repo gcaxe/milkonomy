@@ -2,8 +2,8 @@ import { computed, ref, toRaw, watch } from "vue"
 import { ElMessage } from "element-plus"
 import locales, { getTrans } from "@/locales"
 import type { GraphNode, GraphPin, GraphWire, MultistepPlan, UpupItemRow } from "../types"
+import { deleteRecipe, loadRecipes, saveRecipe } from "../utils/planStore"
 import { findProducingActionOf, getAlchemyActionOptionsOf, getGatherActionsOf, getMundaneProductHridsOf, resolveRecipeA, resolveRecipeB } from "../utils/recipes"
-import { chooseRecipeDir, downloadRecipeJson, getSavedRecipeDir, isDirPickerAvailable, writeRecipeFile, type FSDirHandle } from "../utils/planStore"
 import { useMultistepCalc } from "./useMultistepCalc"
 
 let seq = 0
@@ -25,8 +25,10 @@ export function useMultistepGraph() {
     const list: GraphPin[] = []
     for (const n of nodes.value) {
       if (n.kind === "var") {
-        list.push({ id: `${n.id}:in:main`, nodeId: n.id, side: "in", role: "normal", itemHrid: n.hrid })
-        list.push({ id: `${n.id}:out:main`, nodeId: n.id, side: "out", role: "normal", itemHrid: n.hrid })
+        list.push({ id: `${n.id}:in:main`, nodeId: n.id, side: "in", role: "normal", itemHrid: n.hrid, shape: "circle" })
+        list.push({ id: `${n.id}:out:main`, nodeId: n.id, side: "out", role: "normal", itemHrid: n.hrid, shape: "circle" })
+        if (n.triIn) list.push({ id: `${n.id}:in:tri`, nodeId: n.id, side: "in", role: "normal", itemHrid: n.hrid, shape: "triangle" })
+        if (n.triOut) list.push({ id: `${n.id}:out:tri`, nodeId: n.id, side: "out", role: "normal", itemHrid: n.hrid, shape: "triangle" })
       } else {
         // 未解析函数：仅主 in / 主 out
         if (!isFuncResolved(n)) {
@@ -145,10 +147,11 @@ export function useMultistepGraph() {
     const node = nodeById(nodeId)
     if (!node) return
     wires.value = wires.value.filter(w => !w.fromPinId.startsWith(`${nodeId}:`) && !w.toPinId.startsWith(`${nodeId}:`))
-    // 紫节点：级联删除其自动生成的绿色节点（红节点保留，仅断线）
+    // 紫节点：级联删除其自动生成的绿/红节点，并同步删除红节点对应的 [上部] 行
     if (node.kind === "func") {
       const children = nodes.value.filter(n => n.createdBy === nodeId)
       for (const c of children) {
+        if (c.kind === "var" && c.rowUid != null) rows.value = rows.value.filter(r => r.uid !== c.rowUid)
         wires.value = wires.value.filter(w => !w.fromPinId.startsWith(`${c.id}:`) && !w.toPinId.startsWith(`${c.id}:`))
       }
       nodes.value = nodes.value.filter(n => !(n.createdBy === nodeId))
@@ -171,30 +174,52 @@ export function useMultistepGraph() {
     node.catalystRank = undefined
   }
 
-  /** 紫节点复原为未解析状态：清绿色节点、清自身连线、复位下拉（保留 A/B 类选择）。
-   *  主产物节点的颜色/行恢复由 maintainInvariants 的通用 pin 占用规则处理 */
+  /** 紫节点复原为未解析状态：删除其全部产物节点（绿/蓝，含主产物）、清自身连线、复位下拉。
+   *  产物删除会切断下游紫节点的输入，由 maintainInvariants 循环传播连锁复位 */
   function revertFunc(func: GraphNode) {
-    // 删除该紫节点自动生成的绿色节点及其连线
-    for (const c of nodes.value.filter(n => n.createdBy === func.id)) {
-      wires.value = wires.value.filter(w => !w.fromPinId.startsWith(`${c.id}:`) && !w.toPinId.startsWith(`${c.id}:`))
-    }
-    nodes.value = nodes.value.filter(n => !(n.createdBy === func.id))
+    // 先收集该紫节点的产物变量节点（in-wire 来自紫节点任意输出 pin）
+    const products = nodes.value.filter(n =>
+      n.kind === "var" && wires.value.some(w => w.fromPinId.startsWith(`${func.id}:`) && w.toPinId === `${n.id}:in:main`))
     // 清除紫节点自身全部连线（含与红/绿/蓝节点的连线）
     wires.value = wires.value.filter(w => !w.fromPinId.startsWith(`${func.id}:`) && !w.toPinId.startsWith(`${func.id}:`))
+    // A 类：主产物节点已悬空（线被先删）时同样删除
+    if (func.funcClass === "A" && func.mainItemHrid) {
+      const dangling = nodes.value.find(n =>
+        n.kind === "var" && (n.varKind === "green" || n.varKind === "blue") && n.hrid === func.mainItemHrid
+        && !wires.value.some(w => w.toPinId === `${n.id}:in:main`) && !products.includes(n))
+      if (dangling) products.push(dangling)
+    }
     // 复位为未解析状态
     func.actionHrid = undefined
     func.mainItemHrid = undefined
     func.catalystRank = undefined
+    // 删除产物节点及其行与连线
+    for (const p of products) {
+      if (p.rowUid != null) rows.value = rows.value.filter(r => r.uid !== p.rowUid)
+      wires.value = wires.value.filter(w => !w.fromPinId.startsWith(`${p.id}:`) && !w.toPinId.startsWith(`${p.id}:`))
+    }
+    nodes.value = nodes.value.filter(n => !products.includes(n))
   }
 
   /** 删除连线/节点后的全局一致性维护 */
   function maintainInvariants() {
-    // 已解析紫节点：关键线（A 主产物 out:main / B 主原料 in:main）缺失 → 整体复原
-    for (const func of nodes.value.filter(n => n.kind === "func" && isFuncResolved(n))) {
-      const mainWireExists = func.funcClass === "A"
-        ? wires.value.some(w => w.fromPinId === `${func.id}:out:main`)
-        : wires.value.some(w => w.toPinId === `${func.id}:in:main`)
-      if (!mainWireExists) revertFunc(func)
+    // 已解析紫节点：任一输入/输出 pin 断线 → 复原为无配方状态。
+    // 复原会删除产物节点，可能使下游紫节点失去输入，故循环至稳定（传播式级联复位）
+    let changed = true
+    while (changed) {
+      changed = false
+      for (const func of nodes.value.filter(n => n.kind === "func" && isFuncResolved(n))) {
+        const recipe = resolveFuncRecipe(func)
+        const outOk = recipe.outputs.every((_, i) =>
+          wires.value.some(w => w.fromPinId === `${func.id}:out:${i === 0 ? "main" : i}`))
+        const inOk = recipe.inputs.every((input, i) =>
+          input.auto || wires.value.some(w => w.toPinId === `${func.id}:in:${i === 0 ? "main" : i}`))
+        if (!outOk || !inOk) {
+          revertFunc(func)
+          changed = true
+          break
+        }
+      }
     }
     // 未解析/半配置 B：主输入线缺失 → 复位下拉
     for (const func of nodes.value.filter(n => n.kind === "func" && n.funcClass === "B" && !isFuncResolved(n))) {
@@ -233,6 +258,11 @@ export function useMultistepGraph() {
         }
       }
     }
+    // 三角 pin 无对应三角线时清除标记（紫节点消失/原料节点被删除等场景的清理）
+    for (const v of nodes.value.filter(n => n.kind === "var")) {
+      if (v.triIn && !wires.value.some(w => w.toPinId === `${v.id}:in:tri`)) v.triIn = false
+      if (v.triOut && !wires.value.some(w => w.fromPinId === `${v.id}:out:tri`)) v.triOut = false
+    }
   }
 
   // ===================== 连线交互 =====================
@@ -247,10 +277,38 @@ export function useMultistepGraph() {
     const outNode = nodeById(outPin.nodeId)!, inNode = nodeById(inPin.nodeId)!
     // 输入 pin 只能接一条线
     if (wires.value.some(w => w.toPinId === inPin.id)) return getTrans("该输入引脚已连接")
+    // 一个 pin 只能连出一条线
+    if (wires.value.some(w => w.fromPinId === outPin.id)) return getTrans("该输出引脚已连接")
 
     // —— 变量 → 变量（仅允许：绿 → 红同名 合并） ——
     if (outNode.kind === "var" && inNode.kind === "var") {
+      // 三角 pin 只能连三角 pin
+      const outShape: "circle" | "triangle" = outPin.id.endsWith(":tri") ? "triangle" : "circle"
+      const inShape: "circle" | "triangle" = inPin.id.endsWith(":tri") ? "triangle" : "circle"
+      if (outShape !== inShape) return getTrans("三角回流线只能连接三角引脚")
+      // 三角回流连接：绿/蓝.out:tri → 红.in:tri
+      if (outShape === "triangle") {
+        if (outNode.varKind !== "green" && outNode.varKind !== "blue") return getTrans("该输入引脚不可连接")
+        if (inNode.varKind !== "red") return getTrans("该输入引脚不可连接")
+        if (!inNode.triIn) inNode.triIn = true
+        if (!outNode.triOut) outNode.triOut = true
+        wires.value.push({ id: nextId("wire"), fromPinId: outPin.id, toPinId: inPin.id })
+        layout()
+        return null
+      }
       if (outNode.varKind === "green" && inNode.varKind === "red" && outNode.hrid && outNode.hrid === inNode.hrid) {
+        // 禁止合并：炼金（如转化）中产物与主要原料相同，合并会形成输入=输出的循环
+        const producerWire = wires.value.find(w => w.toPinId === `${outNode.id}:in:main`)
+        const producer = producerWire ? nodeById(pinById(producerWire.fromPinId)?.nodeId ?? "") : undefined
+        if (producer && producer.kind === "func" && producer.funcClass === "B" && producer.mainItemHrid === outNode.hrid) {
+          return getTrans("主要原料与产物相同，禁止合并")
+        }
+        // 环检测：合并会成环时禁止合并，自动改为三角回流连接
+        if (mergeCreatesCycle(outNode, inNode)) {
+          createTriangleLink(outNode, inNode)
+          ElMessage.info(getTrans("会形成循环，已改为三角回流连接"))
+          return null
+        }
         mergeVarNodes(outNode, inNode)
         return null
       }
@@ -327,6 +385,30 @@ export function useMultistepGraph() {
     layout()
   }
 
+  /** 炼金配方切换：清除旧配方的展开（自动生成的绿/红节点与行），按新参数重建 */
+  function reapplyResolvedRecipe(func: GraphNode) {
+    // 删除自动生成的绿/红节点（含 [上部] 行）及其连线
+    for (const c of nodes.value.filter(n => n.createdBy === func.id)) {
+      if (c.kind === "var" && c.rowUid != null) rows.value = rows.value.filter(r => r.uid !== c.rowUid)
+      wires.value = wires.value.filter(w => !w.fromPinId.startsWith(`${c.id}:`) && !w.toPinId.startsWith(`${c.id}:`))
+    }
+    nodes.value = nodes.value.filter(n => !(n.createdBy === func.id))
+    // 仅保留主原料触发线（B 的 in:main）
+    wires.value = wires.value.filter(w => {
+      const touches = w.fromPinId.startsWith(`${func.id}:`) || w.toPinId.startsWith(`${func.id}:`)
+      return !touches || w.toPinId === `${func.id}:in:main`
+    })
+    applyResolvedRecipe(func)
+    maintainInvariants()
+    layout()
+  }
+
+  /** B 类配置变化：未解析→尝试解析；已解析（炼金）→切换配方重建 */
+  function onFuncConfigChange(func: GraphNode) {
+    if (isFuncResolved(func)) reapplyResolvedRecipe(func)
+    else resolveFuncB(func)
+  }
+
   /** 展开配方：重建输入输出 pin、自动生成红/绿节点并连线（金币/茶除外） */
   function applyResolvedRecipe(func: GraphNode) {
     const recipe = resolveFuncRecipe(func)
@@ -358,6 +440,44 @@ export function useMultistepGraph() {
   }
 
   // ===================== 合并（红+绿 → 蓝） =====================
+
+  /** 判断 绿+红 合并是否形成环：从绿的生产紫出发沿下游（含红的后继）能否回到自身 */
+  function mergeCreatesCycle(greenNode: GraphNode, redNode: GraphNode): boolean {
+    const producerWire = wires.value.find(w => w.toPinId === `${greenNode.id}:in:main`)
+    const producer = producerWire ? nodeById(pinById(producerWire.fromPinId)?.nodeId ?? "") : undefined
+    if (!producer || producer.kind !== "func") return false
+    const visited = new Set<string>()
+    const queue: GraphNode[] = [producer]
+    while (queue.length) {
+      const f = queue.shift()!
+      if (visited.has(f.id)) continue
+      visited.add(f.id)
+      for (const w of wires.value.filter(x => x.fromPinId.startsWith(`${f.id}:`))) {
+        const v = nodeById(pinById(w.toPinId)?.nodeId ?? "")
+        if (!v || v.kind !== "var") continue
+        // 合并后绿被蓝取代：蓝.out → 红的全部消费紫
+        const outWires = v.id === greenNode.id
+          ? wires.value.filter(x => x.fromPinId === `${redNode.id}:out:main`)
+          : wires.value.filter(x => x.fromPinId === `${v.id}:out:main`)
+        for (const vw of outWires) {
+          const nf = nodeById(pinById(vw.toPinId)?.nodeId ?? "")
+          if (nf?.kind === "func") {
+            if (nf.id === producer.id) return true
+            queue.push(nf)
+          }
+        }
+      }
+    }
+    return false
+  }
+
+  /** 禁止合并后自动建立三角回流连接：红.in:tri ← 绿.out:tri */
+  function createTriangleLink(greenNode: GraphNode, redNode: GraphNode) {
+    redNode.triIn = true
+    greenNode.triOut = true
+    wires.value.push({ id: nextId("wire"), fromPinId: `${greenNode.id}:out:tri`, toPinId: `${redNode.id}:in:tri` })
+    layout()
+  }
 
   /** 红绿同名合并：记录信息 → 删两节点+红节点行 → 建蓝节点 → 重连 */
   function mergeVarNodes(greenNode: GraphNode, redNode: GraphNode) {
@@ -498,65 +618,66 @@ export function useMultistepGraph() {
     positions.value = {}
   }
 
-  /** 配方保存目录名（null=未选择） */
-  const saveDirName = ref<string | null>(null)
-  let saveDirHandle: FSDirHandle | null = null
+  /** 已保存的配方列表（localStorage，与职业装备预设同一机制） */
+  const savedRecipes = ref<MultistepPlan[]>(loadRecipes())
 
-  /** 选择配方保存目录（之后所有配方都保存到该目录） */
-  async function chooseSaveDir() {
-    try {
-      const name = await chooseRecipeDir()
-      if (name) {
-        saveDirName.value = name
-        ElMessage.success(locales.global.t("已选择保存路径 {0}", [name]))
-        return
-      }
-      ElMessage.warning(getTrans("当前浏览器不支持选择目录，将改为下载文件"))
-    } catch (e) {
-      // 用户取消选择时静默处理
-      if ((e as DOMException)?.name !== "AbortError") {
-        console.error(e)
-        ElMessage.error(getTrans("选择保存路径失败"))
-      }
-    }
-  }
-
-  /** 尝试恢复上次的目录句柄（首次保存时调用） */
-  async function ensureSaveDir(): Promise<FSDirHandle | null> {
-    if (saveDirHandle) return saveDirHandle
-    saveDirHandle = await getSavedRecipeDir()
-    if (saveDirHandle) saveDirName.value = saveDirHandle.name
-    return saveDirHandle
-  }
-
-  /** 保存方案：全部节点与连线写入所选目录（不支持时回退下载文件） */
-  async function savePlan() {
+  /** 保存配方：全部节点与连线写入 localStorage（同名覆盖）。不保存位置，加载时自动布局 */
+  function savePlan() {
     const plan: MultistepPlan = {
-      name: planName.value || `方案 ${plans.value.length + 1}`,
+      name: planName.value || `方案 ${savedRecipes.value.length + 1}`,
       rows: toRaw(rows.value),
-      nodes: toRaw(nodes.value),
+      nodes: toRaw(nodes.value).map(({ x, y, ...rest }) => ({ ...rest, x: 0, y: 0 })),
       wires: toRaw(wires.value),
       savedAt: Date.now()
     }
-    const json = JSON.stringify(plan, null, 2)
-    // 同步更新内存中的同名方案
-    const idx = plans.value.findIndex(p => p.name === plan.name)
-    idx >= 0 ? (plans.value[idx] = plan) : plans.value.push(plan)
     try {
-      let dir = await ensureSaveDir()
-      if (!dir && isDirPickerAvailable()) {
-        // 尚未选择过目录：先让用户选一次
-        const name = await chooseRecipeDir()
-        if (name) dir = await ensureSaveDir()
+      savedRecipes.value = saveRecipe(plan)
+      ElMessage.success(locales.global.t("已保存配方 {0}", [plan.name]))
+    } catch (e) {
+      console.error(e)
+      ElMessage.error(getTrans("保存配方失败"))
+    }
+  }
+
+  /** 读取配方：清空当前全部节点与连线后加载 */
+  function loadRecipe(plan: MultistepPlan) {
+    try {
+      // JSON 深拷贝：彻底剥离 Vue 响应式代理，避免克隆失败
+      const clone = JSON.parse(JSON.stringify(plan)) as MultistepPlan
+      rows.value = clone.rows ?? []
+      nodes.value = clone.nodes ?? []
+      wires.value = clone.wires ?? []
+      positions.value = {}
+      planName.value = clone.name
+      // 更新 id 计数器，避免之后新建节点与已加载节点 id 冲突
+      for (const n of nodes.value) {
+        const m = /(\d+)$/.exec(n.id)
+        if (m) seq = Math.max(seq, Number(m[1]))
       }
-      if (dir) {
-        await writeRecipeFile(dir, plan.name, json)
-        ElMessage.success(locales.global.t("已保存配方 {0}", [plan.name]))
-        return
-      }
-      // 浏览器不支持目录选择：回退为下载文件
-      downloadRecipeJson(plan.name, json)
-      ElMessage.success(locales.global.t("已下载配方 {0}", [plan.name]))
+      layout()
+      ElMessage.success(locales.global.t("已读取配方 {0}", [clone.name]))
+    } catch (e) {
+      console.error(e)
+      ElMessage.error(`${getTrans("读取配方失败")}：${e instanceof Error ? e.message : String(e)}`)
+    }
+  }
+
+  /** 视野聚焦请求（[上部]「查看节点」→ 画布滚动居中） */
+  const focusTarget = ref<{ nodeId: string, nonce: number } | null>(null)
+  function focusNode(nodeId: string) {
+    focusTarget.value = { nodeId, nonce: (focusTarget.value?.nonce ?? 0) + 1 }
+  }
+  /** [上部] 行 → 对应红节点视野居中 */
+  function focusRowNode(rowUid: number) {
+    const node = nodes.value.find(n => n.kind === "var" && n.rowUid === rowUid)
+    if (node) focusNode(node.id)
+  }
+
+  /** 删除配方（按名称） */
+  function removeRecipe(name: string) {
+    try {
+      savedRecipes.value = deleteRecipe(name)
+      ElMessage.success(locales.global.t("已删除配方 {0}", [name]))
     } catch (e) {
       console.error(e)
       ElMessage.error(getTrans("保存配方失败"))
@@ -588,10 +709,11 @@ export function useMultistepGraph() {
   return {
     rows, planName, plans, nodes, wires, pins, zoom, canvasSize, summary, nodeResults,
     hideMundane, hiddenMundaneIds,
-    saveDirName, chooseSaveDir, moveRow,
+    savedRecipes, loadRecipe, removeRecipe, moveRow,
+    focusTarget, focusNode, focusRowNode,
     pinById, nodeById, resolveFuncRecipe,
     addRow, setRowItem, removeRow, addFuncNode, deleteNode, deleteWire,
-    tryConnect, resolveFuncB, mergeVarNodes, balance,
+    tryConnect, resolveFuncB, onFuncConfigChange, mergeVarNodes, balance,
     getGatherActionsOf, getAlchemyActionOptionsOf, findProducingActionOf,
     layout, persistPositions, resetLayout, zoomBy, savePlan, clearAll
   }

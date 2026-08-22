@@ -1,78 +1,36 @@
-import { getIndexedDbValue, setIndexedDbValue } from "@/common/utils/cache/indexed-db"
+import type { MultistepPlan } from "../types"
 
 /**
- * 配方文件保存（File System Access API）：
- * - 首次由用户选择保存目录，句柄持久化到 IndexedDB，之后所有配方都保存到该目录
- * - 不支持的浏览器（Firefox/Safari）回退为下载 JSON 文件
+ * 配方存取：与「职业装备预设」同一机制——浏览器 localStorage（JSON 序列化）。
+ * 并非 cookie，也不是本地文件夹；数据跟随浏览器与站点，清浏览器缓存会丢失。
+ * 参考 src/pinia/stores/player.ts 的 PRESETS_KEY 做法。
  */
 
-/** File System Access API 最小类型声明（兼容 TS lib 缺失场景） */
-export interface FSWritableFile {
-  write(data: string): Promise<void>
-  close(): Promise<void>
-}
-export interface FSFileHandle {
-  createWritable(): Promise<FSWritableFile>
-}
-export interface FSDirHandle {
-  name: string
-  queryPermission?(opts?: { mode?: "read" | "readwrite" }): Promise<"granted" | "denied" | "prompt">
-  requestPermission?(opts?: { mode?: "read" | "readwrite" }): Promise<"granted" | "denied" | "prompt">
-  getFileHandle(name: string, opts?: { create?: boolean }): Promise<FSFileHandle>
-}
+const RECIPES_KEY = "multistep-recipes"
 
-const DIR_HANDLE_KEY = "multistep-recipe-dir-handle"
-
-/** 当前浏览器是否支持目录选择 */
-export function isDirPickerAvailable(): boolean {
-  return typeof window !== "undefined" && typeof (window as any).showDirectoryPicker === "function"
-}
-
-/** 请用户选择配方保存目录，并持久化句柄 */
-export async function chooseRecipeDir(): Promise<string | null> {
-  if (!isDirPickerAvailable()) return null
-  const handle = (await (window as any).showDirectoryPicker({ mode: "readwrite" })) as FSDirHandle
-  await persistDirHandle(handle)
-  return handle.name
-}
-
-/** 恢复上次选择的目录句柄（可能需要用户重新授权） */
-export async function getSavedRecipeDir(): Promise<FSDirHandle | null> {
-  if (!isDirPickerAvailable()) return null
-  const handle = await getIndexedDbValue<FSDirHandle>(DIR_HANDLE_KEY)
-  if (!handle) return null
-  let perm = handle.queryPermission ? await handle.queryPermission({ mode: "readwrite" }) : "granted"
-  if (perm === "denied") return null
-  if (perm === "prompt" && handle.requestPermission) {
-    perm = await handle.requestPermission({ mode: "readwrite" })
+export function loadRecipes(): MultistepPlan[] {
+  try {
+    const raw = localStorage.getItem(RECIPES_KEY)
+    const list = raw ? (JSON.parse(raw) as MultistepPlan[]) : []
+    return Array.isArray(list) ? list : []
+  } catch {
+    return []
   }
-  return perm === "granted" ? handle : null
 }
 
-async function persistDirHandle(handle: FSDirHandle) {
-  await setIndexedDbValue(DIR_HANDLE_KEY, handle)
+/** 保存配方：同名覆盖，否则追加 */
+export function saveRecipe(plan: MultistepPlan): MultistepPlan[] {
+  const list = loadRecipes()
+  const idx = list.findIndex(p => p.name === plan.name)
+  if (idx >= 0) list[idx] = plan
+  else list.push(plan)
+  localStorage.setItem(RECIPES_KEY, JSON.stringify(list))
+  return list
 }
 
-/** 清洗文件名中的非法字符 */
-export function sanitizeFileName(name: string): string {
-  return (name.replace(/[\\/:*?"<>|]/g, "_").trim() || "recipe")
-}
-
-/** 把配方 JSON 写入所选目录 */
-export async function writeRecipeFile(dir: FSDirHandle, name: string, json: string): Promise<void> {
-  const file = await dir.getFileHandle(`${sanitizeFileName(name)}.json`, { create: true })
-  const writable = await file.createWritable()
-  await writable.write(json)
-  await writable.close()
-}
-
-/** 不支持目录选择时的回退：下载 JSON 文件 */
-export function downloadRecipeJson(name: string, json: string) {
-  const blob = new Blob([json], { type: "application/json" })
-  const url = URL.createObjectURL(blob)
-  const a = document.createElement("a")
-  a.href = url
-  a.download = `${sanitizeFileName(name)}.json`
-  a.click()
-  URL.revokeObjectURL(url)
+/** 删除配方（按名称） */
+export function deleteRecipe(name: string): MultistepPlan[] {
+  const list = loadRecipes().filter(p => p.name !== name)
+  localStorage.setItem(RECIPES_KEY, JSON.stringify(list))
+  return list
 }

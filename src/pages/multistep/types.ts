@@ -36,6 +36,10 @@ export interface GraphNode {
   catalystRank?: 0 | 1 | 2
   /** 由哪个紫节点自动生成（级联删除用） */
   createdBy?: string
+  /** 三角输入 pin（循环回流入口，红节点） */
+  triIn?: boolean
+  /** 三角输出 pin（循环回流出端，绿/蓝节点） */
+  triOut?: boolean
   // —— 坐标 ——
   x: number
   y: number
@@ -43,7 +47,7 @@ export interface GraphNode {
 
 /** 引脚：id 可确定性重建，因此只需要持久化 wire 即可恢复全图 */
 export interface GraphPin {
-  /** `${nodeId}:in:main` / `${nodeId}:in:1` / `${nodeId}:out:main` / `${nodeId}:out:1` ... */
+  /** `${nodeId}:in:main` / `${nodeId}:in:1` / `${nodeId}:out:main` / `${nodeId}:out:1` / `${nodeId}:in:tri` ... */
   id: string
   nodeId: string
   side: "in" | "out"
@@ -53,6 +57,8 @@ export interface GraphPin {
   itemHrid: string
   /** 自动供给（金币、茶）：不画线、不生成红节点，用灰色圆点表示 */
   auto?: boolean
+  /** 形状：circle=普通连线；triangle=循环回流连线（防环） */
+  shape?: "circle" | "triangle"
 }
 
 /** 一条连线：永远从 output pin 指向 input pin */

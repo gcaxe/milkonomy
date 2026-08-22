@@ -1,10 +1,11 @@
 <script lang="ts" setup>
 import { computed, ref } from "vue"
 import { Delete, Plus, Rank } from "@element-plus/icons-vue"
+import { ElMessageBox } from "element-plus"
 import ItemIcon from "@@/components/ItemIcon/index.vue"
 import * as Format from "@@/utils/format"
 import type { useMultistepGraph } from "../composables/useMultistepGraph"
-import type { UpupItemRow } from "../types"
+import type { MultistepPlan, UpupItemRow } from "../types"
 import { getTradableItemOptions } from "../utils/items"
 
 const props = defineProps<{ graph: ReturnType<typeof useMultistepGraph> }>()
@@ -45,6 +46,24 @@ function onRowDragEnd() {
 }
 
 const summary = computed(() => props.graph.summary.value)
+
+// 读取配方弹窗
+const readDialogVisible = ref(false)
+function readPlan(plan: MultistepPlan) {
+  props.graph.loadRecipe(plan)
+  readDialogVisible.value = false
+}
+function removePlan(name: string) {
+  ElMessageBox.confirm(t("确定删除配方 {0} 吗？", [name]), t("删除配方"), {
+    confirmButtonText: t("确定"),
+    cancelButtonText: t("取消"),
+    type: "warning"
+  }).then(() => {
+    props.graph.removeRecipe(name)
+  }).catch(() => {
+    // 取消删除
+  })
+}
 </script>
 
 <template>
@@ -64,10 +83,8 @@ const summary = computed(() => props.graph.summary.value)
             style="width: 220px"
             clearable
           />
-          <el-button plain :title="graph.saveDirName.value ?? ''" class="save-dir" @click="graph.chooseSaveDir()">
-            {{ graph.saveDirName.value ? t('保存路径：{0}', [graph.saveDirName.value]) : t('选择保存路径') }}
-          </el-button>
-          <el-button type="primary" @click="graph.savePlan()">{{ t('保存当前步骤') }}</el-button>
+          <el-button @click="readDialogVisible = true">{{ t('读取配方') }}</el-button>
+          <el-button type="primary" @click="graph.savePlan()">{{ t('保存配方') }}</el-button>
         </div>
       </div>
     </template>
@@ -107,22 +124,26 @@ const summary = computed(() => props.graph.summary.value)
           </div>
         </el-option>
       </el-select>
+      <!-- 只有第一行的数量可编辑且保留 +/- 按钮，其余只读（可选中复制） -->
       <el-input-number
         :model-value="row.count"
         :min="0"
         :step="1"
         :precision="3"
+        :readonly="index !== 0"
+        :controls="index === 0"
         style="width: 160px"
         @update:model-value="(val) => onCountInput(row, val)"
       />
       <el-button :icon="Delete" plain @click="graph.removeRow(row.uid)" />
+      <el-button plain @click="graph.focusRowNode(row.uid)">{{ t('查看节点') }}</el-button>
     </div>
 
     <div class="row-tools">
-      <el-button :icon="Plus" plain @click="graph.addRow(true)">
+      <el-button :icon="Plus" type="danger" plain @click="graph.addRow(true)">
         {{ t('添加物品') }}
       </el-button>
-      <el-button :icon="Plus" plain type="warning" class="add-func" @click="graph.addFuncNode()">
+      <el-button :icon="Plus" plain class="add-func" @click="graph.addFuncNode()">
         {{ t('添加处理方式') }}
       </el-button>
     </div>
@@ -162,6 +183,25 @@ const summary = computed(() => props.graph.summary.value)
         <div class="card-sub">{{ t('小时收益乘24') }}</div>
       </div></el-col>
     </el-row>
+
+    <!-- 读取配方弹窗 -->
+    <el-dialog v-model="readDialogVisible" :title="t('读取配方')" width="520px">
+      <div v-if="!graph.savedRecipes.value.length" class="empty-tip">{{ t('暂无保存的配方') }}</div>
+      <div v-for="plan in graph.savedRecipes.value" :key="plan.name" class="recipe-row">
+        <div class="recipe-info">
+          <div class="recipe-name">{{ plan.name }}</div>
+          <div class="recipe-time">{{ new Date(plan.savedAt).toLocaleString() }}</div>
+        </div>
+        <div class="recipe-actions">
+          <el-button type="primary" plain size="small" @click="readPlan(plan)">
+            {{ t('读取此配方') }}
+          </el-button>
+          <el-button type="danger" plain size="small" :icon="Delete" @click="removePlan(plan.name)">
+            {{ t('删除配方') }}
+          </el-button>
+        </div>
+      </div>
+    </el-dialog>
   </el-card>
 </template>
 
@@ -178,6 +218,19 @@ const summary = computed(() => props.graph.summary.value)
 .option-item { display: flex; align-items: center; gap: 8px; }
 .row-tools { display: flex; gap: 10px; margin-bottom: 16px; }
 .add-func { border-color: #a855f7; background: rgba(168, 85, 247, 0.08); color: #a855f7; }
+.add-func:hover { background: rgba(168, 85, 247, 0.25); border-color: #a855f7; color: #a855f7; }
+.recipe-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 4px;
+  border-bottom: 1px solid var(--el-border-color-lighter);
+}
+.recipe-name { font-weight: 600; }
+.recipe-time { font-size: 12px; color: var(--el-text-color-secondary); }
+.recipe-actions { display: flex; gap: 8px; flex-shrink: 0; }
+.empty-tip { color: var(--el-text-color-secondary); text-align: center; padding: 16px; }
 .summary-cards .card {
   border: 1px solid var(--el-border-color);
   border-radius: 8px;

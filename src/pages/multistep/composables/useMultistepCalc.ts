@@ -25,11 +25,15 @@ export function useMultistepCalc(nodes: Ref<GraphNode[]>, wires: Ref<GraphWire[]
     if (nv !== ov && !suppressReset) balanceResult.value = null
   })
 
-  /** 自动配平入口：第一行=100，其余按配方期望传播 */
+  /** 自动配平入口：以第一行用户填写数量为基准，其余按配方期望传播 */
   function balance() {
     const driver = nodes.value.find(n => n.kind === "var" && n.rowUid != null && rows.value[0] && n.rowUid === rows.value[0].uid)
     if (!driver || !driver.hrid) {
       ElMessage.warning(getTrans("请先在第一行选择物品"))
+      return
+    }
+    if ((rows.value[0]?.count ?? 0) < 1) {
+      ElMessage.warning(getTrans("请将第一行数量改为大于1的数值"))
       return
     }
     suppressReset = true
