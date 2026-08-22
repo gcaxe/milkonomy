@@ -15,6 +15,8 @@ const onPriceStatusChange = usePriceStatus("multistep-price-status")
 const graph = useMultistepGraph()
 // 蓝图全屏（CSS 铺满视口，非浏览器原生全屏，便于保留工具栏）
 const fullscreen = ref(false)
+// 使用指南配图目录（模板表达式里不能用 import.meta）
+const guideBase = `${import.meta.env.BASE_URL}guide/`
 
 /** 清空全部节点与连线（二次确认） */
 function onClearAll() {
@@ -84,9 +86,23 @@ function onClearAll() {
         <span class="title">{{ t('使用指南') }}</span>
       </template>
       <div class="guide-line">{{ t('本界面不提供任何推荐功能，只提供模拟功能') }}</div>
+      <div class="guide-line">{{ t('炼金行动选择核心原料连线，非炼金选择核心产物连线，上方连原料，下方连产物，根据配方自动生成其他节点') }}</div>
       <div class="guide-line">{{ t('连完线后，点击自动配平') }}</div>
       <div class="guide-line">{{ t('平凡产物是该行动的精华、箱子类物品、精通之油类物品，但利润还是正常算。') }}</div>
       <div class="guide-line">{{ t('绿色节点可以与红色节点相连，非环则合并，形成环则会有限递归计算') }}</div>
+      <!-- 配图：尽量按原图尺寸展示 -->
+      <div class="guide-images">
+        <img
+          class="guide-img"
+          :src="guideBase + 'p11.png'"
+          :alt="t('绿色节点可以与红色节点相连，非环则合并，形成环则会有限递归计算')"
+        >
+        <img
+          class="guide-img"
+          :src="guideBase + 'p11_2.png'"
+          :alt="t('绿色节点可以与红色节点相连，非环则合并，形成环则会有限递归计算')"
+        >
+      </div>
     </el-card>
   </div>
 </template>
@@ -157,4 +173,15 @@ function onClearAll() {
   color: #a855f7;
 }
 .guide-line + .guide-line { margin-top: 1em; }
+.guide-images {
+  margin-top: 12px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+}
+.guide-img {
+  /* 尽量按原图尺寸展示；超出容器宽度时等比缩小 */
+  max-width: 100%;
+  height: auto;
+}
 </style>

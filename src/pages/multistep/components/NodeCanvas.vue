@@ -16,6 +16,13 @@ const scrollTick = ref(0)
 // 红节点内选择物品的选项（与 [上部] 共用同一来源）
 const itemOptions = computed(() => getTradableItemOptions())
 
+// 节点/连线数量变化（清空、读取配方、三角线增删等结构操作）后强制重算锚点表，
+// 并清掉可能残留的临时拖线，避免旧连线残留在画布上
+watch(() => [props.graph.nodes.value.length, props.graph.wires.value.length], () => {
+  scrollTick.value++
+  tempWire.value = null
+})
+
 // [上部]「查看节点」：滚动视口使对应节点尽量居中
 watch(() => props.graph.focusTarget.value, (t) => {
   if (!t || !wrapRef.value) return
@@ -163,9 +170,11 @@ function onPinDragStart(pinId: string, ev: PointerEvent) {
     tempWire.value = null
     window.removeEventListener("pointermove", onMove)
     window.removeEventListener("pointerup", onUp)
+    window.removeEventListener("pointercancel", onUp)
   }
   window.addEventListener("pointermove", onMove)
   window.addEventListener("pointerup", onUp)
+  window.addEventListener("pointercancel", onUp)
 }
 
 /** UE5 蓝图式贝塞尔曲线（竖直切线） */

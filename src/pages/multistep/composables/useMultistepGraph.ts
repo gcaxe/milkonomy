@@ -649,10 +649,39 @@ export function useMultistepGraph() {
       wires.value = clone.wires ?? []
       positions.value = {}
       planName.value = clone.name
-      // 更新 id 计数器，避免之后新建节点与已加载节点 id 冲突
+      // 更新 id 计数器（节点与连线都要扫），避免之后新建节点/连线与已加载 id 冲突
       for (const n of nodes.value) {
         const m = /(\d+)$/.exec(n.id)
         if (m) seq = Math.max(seq, Number(m[1]))
+      }
+      for (const w of wires.value) {
+        const m = /(\d+)$/.exec(w.id)
+        if (m) seq = Math.max(seq, Number(m[1]))
+      }
+      // 归一化：旧版本保存的配方可能存在重复 id（key 冲突导致渲染错乱/残留线），重新分配
+      const nodeIdRemap = new Map<string, string>()
+      const seenNodeIds = new Set<string>()
+      for (const n of nodes.value) {
+        if (!n.id || seenNodeIds.has(n.id)) {
+          const oldId = n.id
+          n.id = nextId("node")
+          nodeIdRemap.set(oldId, n.id)
+        }
+        seenNodeIds.add(n.id)
+      }
+      const seenWireIds = new Set<string>()
+      for (const w of wires.value) {
+        if (!w.id || seenWireIds.has(w.id)) {
+          w.id = nextId("wire")
+        }
+        seenWireIds.add(w.id)
+        // 节点 id 变更时同步重映射连线端点
+        if (nodeIdRemap.size) {
+          const fromParts = w.fromPinId.split(":")
+          const toParts = w.toPinId.split(":")
+          if (nodeIdRemap.has(fromParts[0])) w.fromPinId = `${nodeIdRemap.get(fromParts[0])}:${fromParts.slice(1).join(":")}`
+          if (nodeIdRemap.has(toParts[0])) w.toPinId = `${nodeIdRemap.get(toParts[0])}:${toParts.slice(1).join(":")}`
+        }
       }
       layout()
       ElMessage.success(locales.global.t("已读取配方 {0}", [clone.name]))
