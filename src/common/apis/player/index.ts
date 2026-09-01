@@ -223,7 +223,7 @@ export function getSealList() {
 // #endregion
 
 // #region buff计算
-function initBuffMap() {
+export function initBuffMap() {
   if (!getGameDataApi()) return
   buffs = {} as Record<NoncombatStatsProp, number>
   const enhanceMultiplier = getGameDataApi().enhancementLevelTotalBonusMultiplierTable

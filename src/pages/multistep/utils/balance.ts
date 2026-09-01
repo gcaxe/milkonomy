@@ -3,6 +3,7 @@ import { CoinifyCalculator, DecomposeCalculator, TransmuteCalculator } from "@/c
 import { GatherCalculator } from "@/calculator/gather"
 import { ManufactureCalculator } from "@/calculator/manufacture"
 import { getPriceOf } from "@/common/apis/game"
+import { initBuffMap } from "@/common/apis/player"
 import { getTrans } from "@/locales"
 import type { GraphNode, GraphWire, NodeCalcResult, UpupItemRow } from "../types"
 import { getGatherActionsOf } from "./recipes"
@@ -11,7 +12,7 @@ import { getGatherActionsOf } from "./recipes"
 export interface BalanceResult {
   /** 驱动节点（[上部] 第一行对应的红节点） */
   driver: GraphNode | null
-  /** 每函数：单批动作次数 / 单次耗时(ns) / 隐藏输入（金币/茶）总成本 */
+  /** 每函数：单批动作次数 / 单次有效耗时(ns，已按效率折算) / 隐藏输入（金币/茶）总成本 */
   funcInfo: Map<string, { actions: number, timeCost: number, hiddenCost: number }>
   /** 每节点计算结果（展示在节点上） */
   nodeInfo: Map<string, NodeCalcResult>
@@ -33,6 +34,27 @@ export interface BalanceResult {
   dailyProfit: number | null
   processNodeCount: number
   sellLeafCount: number
+  /** 用时占比明细（新功能） */
+  steps: BalanceStep[]
+}
+
+/** 用时占比明细行（p11_3 参考） */
+export interface BalanceStep {
+  funcId: string
+  /** 主要处理物品 hrid */
+  mainHrid: string
+  /** 动作名（非炼金=动作名；炼金=点金/分解/转化·催化剂） */
+  actionLabel: string
+  /** 该批处理的主要物品数量（输入或输出） */
+  processCount: number
+  /** 单批动作次数 */
+  actions: number
+  /** 单批耗时 ns */
+  batchTime: number
+  /** 占总处理耗时比例 0-1 */
+  share: number
+  /** 动作次数/h */
+  actionsPerHour: number
 }
 
 function emptyNodeCalc(): NodeCalcResult {
@@ -72,6 +94,8 @@ export function balanceAndMutate(nodes: GraphNode[], wires: GraphWire[], rows: U
   const nodeMap = new Map(nodes.map(n => [n.id, n]))
   const nodeInfo = new Map<string, NodeCalcResult>()
   const funcInfo = new Map<string, { actions: number, timeCost: number, hiddenCost: number }>()
+  // 配平前强制初始化 buffs（装备/等级/茶/星空加成），保证 speed/successRate 与首页一致
+  initBuffMap()
 
   const empty = (): BalanceResult => ({
     driver: null, funcInfo, nodeInfo,
@@ -79,7 +103,8 @@ export function balanceAndMutate(nodes: GraphNode[], wires: GraphWire[], rows: U
     income: 0, tax: 0, profit: 0, profitRate: 0,
     hourlyProfit: null, dailyProfit: null,
     processNodeCount: nodes.filter(isFuncResolved).length,
-    sellLeafCount: nodes.filter(n => n.kind === "var" && n.varKind === "green").length
+    sellLeafCount: nodes.filter(n => n.kind === "var" && n.varKind === "green").length,
+    steps: []
   })
 
   const driver = nodes.find(n => n.kind === "var" && n.rowUid != null && rows[0] && n.rowUid === rows[0].uid) ?? null
@@ -146,14 +171,14 @@ export function balanceAndMutate(nodes: GraphNode[], wires: GraphWire[], rows: U
       visited.add(v.id)
       const q = nodeQ.get(v.id) ?? 0
 
-      // 红节点三采集：累计采集耗时
+      // 红节点三采集：累计采集耗时（效率同样折算：单次有效耗时 = effectiveTimeCost / efficiency）
       if (v.kind === "var" && v.varKind === "red" && v.hrid && v.obtain === "gather") {
         const gatherAction = getGatherActionsOf(v.hrid)[0]
         if (gatherAction) {
           const action = gatherAction.split("/")[2] as Action
           const g = new GatherCalculator({ hrid: v.hrid, project: getTrans("处理方式"), action })
           const yieldPerAction = g.productList.find(p => p.hrid === v.hrid)?.count || 1
-          gatherTime += (q / yieldPerAction) * g.timeCost
+          gatherTime += (q / yieldPerAction) * (g.effectiveTimeCost / g.efficiency)
         }
       }
 
@@ -162,7 +187,7 @@ export function balanceAndMutate(nodes: GraphNode[], wires: GraphWire[], rows: U
       if (producerWire) {
         const func = nodeMap.get(producerWire.fromPinId.split(":")[0])
         if (func && func.kind === "func" && isFuncResolved(func) && !processedFuncs.has(func.id)) {
-          const calc = buildFuncCalculator(func)
+          const calc = buildFuncCalculator(func) /* 现场构造：speed/buff 取当前玩家配置 */
           const outEntry = calc.productList.find(p => p.hrid === v.hrid)
           if (outEntry) {
             // 反推同样折算成功率：每动作期望产出 = count × rate × successRate
@@ -175,7 +200,7 @@ export function balanceAndMutate(nodes: GraphNode[], wires: GraphWire[], rows: U
         const func = nodeMap.get(w.toPinId.split(":")[0])
         if (!func || func.kind !== "func" || !isFuncResolved(func)) continue
         if (processedFuncs.has(func.id)) continue
-        const calc = buildFuncCalculator(func)
+        const calc = buildFuncCalculator(func) /* 现场构造：speed/buff 取当前玩家配置 */
         const inEntry = calc.ingredientList.find(i => i.hrid === v.hrid)
         if (inEntry) {
           processFunc(func, calc, q / inEntry.count)
@@ -293,7 +318,9 @@ export function balanceAndMutate(nodes: GraphNode[], wires: GraphWire[], rows: U
     const func = nodeMap.get(funcId)
     if (!func) continue
     const { actions, calc } = fa
-    const timeCost = calc.timeCost
+    // 效率等价于独立乘区的速度：>100% 效率时单批耗时 = 动作数 × effectiveTimeCost / efficiency
+    // （与首页 actionsPH = 3600 / effectiveTimeCost × efficiency 口径一致，小时收益才能对上）
+    const timeCost = calc.effectiveTimeCost / calc.efficiency
     // 隐藏输入（金币/茶）= ingredientList 中没有变量连线的条目
     const wiredHrids = new Set<string>()
     for (const iw of wires.filter(x => x.toPinId.startsWith(`${func.id}:`))) {
@@ -324,6 +351,45 @@ export function balanceAndMutate(nodes: GraphNode[], wires: GraphWire[], rows: U
   const profitRate = totalCost > 0 ? profit / totalCost : 0
   const hourlyProfit = totalTime > 0 ? profit * ((3600 * 1e9) / totalTime) : null
 
+  // 用时占比明细（p11_3 参考）：处理物品/动作/处理数量/动作次数/批次耗时/工时占比/动作次数/h
+  const ALCHEMY_ACTION_LABEL: Record<string, string> = { coinify: "点金", decompose: "分解", transmute: "转化" }
+  const CATALYST_LABEL: Record<number, string> = { 0: "", 1: " · 普通催化剂", 2: " · 至高催化剂" }
+  const steps: BalanceStep[] = []
+  for (const [funcId, fa] of funcActions) {
+    const func = nodeMap.get(funcId)
+    if (!func || fa.actions <= 0) continue
+    const actionHrid = func.actionHrid!
+    const actionLabel = func.funcClass === "A"
+      ? getTrans(actionHrid.split("/")[2] as any)
+      : `${ALCHEMY_ACTION_LABEL[actionHrid.split("/").pop() as string]}${CATALYST_LABEL[func.catalystRank ?? 0]}`
+    const batchTime = fa.actions * (fa.calc.effectiveTimeCost / fa.calc.efficiency)
+    // 主要物品数量：输入线连着的变量 hrid（非炼金=主产物经反推也成立，取原料优先）
+    let processCount = 0
+    for (const iw of wires.filter(x => x.toPinId.startsWith(`${funcId}:`))) {
+      const src = nodeMap.get(iw.fromPinId.split(":")[0])
+      if (src?.kind === "var" && src.hrid) {
+        const q = nodeQ.get(src.id)
+        if (q != null && q > processCount) processCount = q
+      }
+    }
+    if (processCount <= 0 && func.mainItemHrid) {
+      // 兜底：主原料动作数 × 每动作消耗
+      const entry = fa.calc.ingredientList.find(i => i.hrid === func.mainItemHrid)
+      processCount = entry ? fa.actions * entry.count : fa.actions
+    }
+    steps.push({
+      funcId,
+      mainHrid: func.mainItemHrid ?? "",
+      actionLabel,
+      processCount,
+      actions: fa.actions,
+      batchTime,
+      share: totalTime > 0 ? batchTime / totalTime : 0,
+      actionsPerHour: totalTime > 0 ? fa.actions * ((3600 * 1e9) / totalTime) : 0
+    })
+  }
+  steps.sort((a, b) => b.batchTime - a.batchTime)
+
   return {
     driver, funcInfo, nodeInfo,
     totalTime,
@@ -337,6 +403,7 @@ export function balanceAndMutate(nodes: GraphNode[], wires: GraphWire[], rows: U
     hourlyProfit,
     dailyProfit: hourlyProfit != null ? hourlyProfit * 24 : null,
     processNodeCount: nodes.filter(isFuncResolved).length,
-    sellLeafCount: nodes.filter(n => n.kind === "var" && n.varKind === "green").length
+    sellLeafCount: nodes.filter(n => n.kind === "var" && n.varKind === "green").length,
+    steps
   }
 }

@@ -84,6 +84,8 @@ export function useMultistepCalc(nodes: Ref<GraphNode[]>, wires: Ref<GraphWire[]
   })
 
   const nodeResults = computed(() => balanceResult.value?.nodeInfo ?? new Map<string, NodeCalcResult>())
+  /** 用时占比明细（配平后提供，未配平为空） */
+  const steps = computed(() => balanceResult.value?.steps ?? [])
 
-  return { summary, nodeResults, balance }
+  return { summary, nodeResults, steps, balance }
 }

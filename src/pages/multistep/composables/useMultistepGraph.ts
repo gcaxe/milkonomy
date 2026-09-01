@@ -731,12 +731,12 @@ export function useMultistepGraph() {
   }, { deep: true })
 
   // 配平计算（快照驱动六卡片与节点指标）
-  const { summary, nodeResults, balance } = useMultistepCalc(nodes, wires, rows)
+  const { summary, nodeResults, steps, balance } = useMultistepCalc(nodes, wires, rows)
 
   if (nodes.value.length) layout()
 
   return {
-    rows, planName, plans, nodes, wires, pins, zoom, canvasSize, summary, nodeResults,
+    rows, planName, plans, nodes, wires, pins, zoom, canvasSize, summary, nodeResults, steps,
     hideMundane, hiddenMundaneIds,
     savedRecipes, loadRecipe, removeRecipe, moveRow,
     focusTarget, focusNode, focusRowNode,

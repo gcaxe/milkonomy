@@ -9,6 +9,11 @@ import { usePriceStatus } from "@/common/composables/usePriceStatus"
 import UpupPanel from "./components/UpupPanel.vue"
 import NodeCanvas from "./components/NodeCanvas.vue"
 import { useMultistepGraph } from "./composables/useMultistepGraph"
+import TimeSharePanel from "./components/TimeSharePanel.vue"
+import { usePlayerStore } from "@/pinia/stores/player"
+
+// 触发 player store 初始化（buffs/装备/等级），配平与首页计算器同源需要
+void usePlayerStore()
 
 const { t } = useI18n()
 const onPriceStatusChange = usePriceStatus("multistep-price-status")
@@ -80,6 +85,9 @@ function onClearAll() {
       <NodeCanvas :graph="graph" />
     </el-card>
 
+    <!-- 用时占比（配平后显示） -->
+    <TimeSharePanel :steps="graph.steps.value" />
+
     <!-- 使用指南（与结点图平行层级） -->
     <el-card class="mt-5">
       <template #header>
@@ -90,6 +98,8 @@ function onClearAll() {
       <div class="guide-line">{{ t('连完线后，点击自动配平') }}</div>
       <div class="guide-line">{{ t('平凡产物是该行动的精华、箱子类物品、精通之油类物品，但利润还是正常算。') }}</div>
       <div class="guide-line">{{ t('绿色节点可以与红色节点相连，非环则合并，形成环则会有限递归计算') }}</div>
+      <div class="guide-line">{{ t('炼金的例子：想要点金太阳石，添加物品太阳石和处理节点') }}</div>
+      <div class="guide-line">{{ t('非炼金的例子：想要红杉弩+神秘木板获得神秘弩，添加物品神秘弩和处理节点') }}</div>
       <!-- 配图：尽量按原图尺寸展示 -->
       <div class="guide-images">
         <img
