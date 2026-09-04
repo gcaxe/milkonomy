@@ -5,6 +5,7 @@ import { ManufactureCalculator } from "@/calculator/manufacture"
 import { getPriceOf } from "@/common/apis/game"
 import { initBuffMap } from "@/common/apis/player"
 import { getTrans } from "@/locales"
+import { COIN_HRID } from "@/pinia/stores/game"
 import type { GraphNode, GraphWire, NodeCalcResult, UpupItemRow } from "../types"
 import { getGatherActionsOf } from "./recipes"
 
@@ -26,7 +27,7 @@ export interface BalanceResult {
   extraCost: number
   /** 单批税后收入 */
   income: number
-  /** 市场税（收入/0.95×0.05） */
+  /** 市场税（非金币叶子按税前 5% 逐个累计，金币叶子不计税） */
   tax: number
   profit: number
   profitRate: number
@@ -271,6 +272,7 @@ export function balanceAndMutate(nodes: GraphNode[], wires: GraphWire[], rows: U
   let totalCost = 0
   let startItemCost = 0
   let income = 0
+  let taxTotal = 0
 
   for (const v of nodes) {
     if (v.kind !== "var") continue
@@ -308,8 +310,10 @@ export function balanceAndMutate(nodes: GraphNode[], wires: GraphWire[], rows: U
         if (entry) price = entry.marketPrice
       }
       const pre = q * price
-      const after = pre * 0.95
+      // 金币（点金产物）是货币本身，不计市场税；其余叶子按 5% 计税（与首页计算器口径一致）
+      const after = v.hrid === COIN_HRID ? pre : pre * 0.95
       income += after
+      taxTotal += pre - after
       nodeInfo.set(v.id, { actions: null, timeCost: null, extraCost: null, preTaxIncome: pre, tax: pre - after, afterTaxIncome: after })
     }
   }
@@ -346,7 +350,8 @@ export function balanceAndMutate(nodes: GraphNode[], wires: GraphWire[], rows: U
     })
   }
 
-  const tax = income > 0 ? (income / 0.95) * 0.05 : 0
+  // 市场税按叶子逐个累计（金币叶子不计税，不能由总收入反推）
+  const tax = taxTotal
   const profit = income - totalCost
   const profitRate = totalCost > 0 ? profit / totalCost : 0
   const hourlyProfit = totalTime > 0 ? profit * ((3600 * 1e9) / totalTime) : null
