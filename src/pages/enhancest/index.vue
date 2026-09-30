@@ -42,7 +42,7 @@ const currentDecompose = ref({
 
 const defaultConfig = {
   hourlyRate: 5000000,
-  taxRate: 5,
+  taxRate: 4,
   enhanceLevel: 10,
   originLevel: 0,
   escapeLevel: -1
@@ -77,15 +77,15 @@ interface Item {
   protection?: Ingredient
 }
 
-// Market tax rate: only 0% / 5%.
-// Internally persist `ignoreTax` (0% => true, 5% => false).
+// Market tax rate: only 0% / 4%.
+// Internally persist `ignoreTax` (0% => true, 4% => false).
 const marketTaxRate = computed<number>({
-  get: () => (enhancerStore.advancedConfig.ignoreTax ? 0 : 5),
+  get: () => (enhancerStore.advancedConfig.ignoreTax ? 0 : 4),
   set: (value: number) => {
     enhancerStore.advancedConfig.ignoreTax = value === 0
   }
 })
-const sellTaxFactorComputed = computed(() => marketTaxRate.value === 0 ? 1 : 0.95)
+const sellTaxFactorComputed = computed(() => marketTaxRate.value === 0 ? 1 : 0.96)
 
 function onSelect(item: ItemDetail) {
   if (!item) {
@@ -205,7 +205,7 @@ const results = computed(() => {
 
   const result = []
   const ignoreTax = !!enhancerStore.advancedConfig.ignoreTax
-  const sellTaxFactor = ignoreTax ? 1 : 0.95
+  const sellTaxFactor = ignoreTax ? 1 : 0.96
   const enhanceLevel = enhancerStore.advancedConfig.enhanceLevel ?? defaultConfig.enhanceLevel
   let protectLevel = Math.max(2, (enhancerStore.advancedConfig.escapeLevel ?? defaultConfig.escapeLevel) + 1)
   for (; protectLevel <= enhanceLevel; ++protectLevel) {
@@ -762,10 +762,10 @@ watch(menuVisible, (value) => {
                 <el-input-number
                   class="w-120px"
                   v-model="marketTaxRate"
-                  :step="5"
+                  :step="4"
                   :step-strictly="true"
                   :min="0"
-                  :max="5"
+                  :max="4"
                   controls-position="right"
                   :controls="true"
                   :placeholder="defaultConfig.taxRate.toString()"
@@ -804,10 +804,10 @@ watch(menuVisible, (value) => {
                   class="w-full"
                   style="width: 100%"
                   v-model="marketTaxRate"
-                  :step="5"
+                  :step="4"
                   :step-strictly="true"
                   :min="0"
-                  :max="5"
+                  :max="4"
                   controls-position="right"
                   :controls="true"
                 />

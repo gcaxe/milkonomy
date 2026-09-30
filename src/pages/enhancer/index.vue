@@ -85,14 +85,14 @@ const costGuideExpandedRowKeys = ref<string[]>([])
 
 const defaultConfig = {
   hourlyRate: 5000000,
-  taxRate: 5,
+  taxRate: 4,
   enhanceLevel: 10
 }
 
-// Market tax rate: only 0% / 5%.
-// Internally we persist `ignoreTax` (0% => true, 5% => false).
+// Market tax rate: only 0% / 4%.
+// Internally we persist `ignoreTax` (0% => true, 4% => false).
 const marketTaxRate = computed<number>({
-  get: () => (enhancerStore.config.ignoreTax ? 0 : 5),
+  get: () => (enhancerStore.config.ignoreTax ? 0 : 4),
   set: (value: number) => {
     enhancerStore.config.ignoreTax = value === 0
   }
@@ -925,7 +925,7 @@ const results = computed(() => {
 
   const result = []
   const ignoreTax = !!enhancerStore.config.ignoreTax
-  const sellTaxFactor = ignoreTax ? 1 : 0.95
+  const sellTaxFactor = ignoreTax ? 1 : 0.96
   const enhanceLevel = enhancerStore.enhanceLevel ?? defaultConfig.enhanceLevel
   for (let i = 1; i <= enhanceLevel; ++i) {
     const calc = new EnhanceCalculator({
@@ -1348,10 +1348,10 @@ watch(menuVisible, (value) => {
                 <el-input-number
                   class="w-120px"
                   v-model="enhancerStore.config.taxRate"
-                  :step="5"
+                  :step="4"
                   :step-strictly="true"
                   :min="0"
-                  :max="5"
+                  :max="4"
                   controls-position="right"
                   :placeholder="defaultConfig.taxRate.toString()"
                 />
@@ -1389,10 +1389,10 @@ watch(menuVisible, (value) => {
                   class="w-full"
                   style="width: 100%"
                   v-model="marketTaxRate"
-                  :step="5"
+                  :step="4"
                   :step-strictly="true"
                   :min="0"
-                  :max="5"
+                  :max="4"
                   controls-position="right"
                   :controls="true"
                 />

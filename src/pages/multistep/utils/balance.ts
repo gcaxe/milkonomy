@@ -27,7 +27,7 @@ export interface BalanceResult {
   extraCost: number
   /** 单批税后收入 */
   income: number
-  /** 市场税（非金币叶子按税前 5% 逐个累计，金币叶子不计税） */
+  /** 市场税（非金币叶子按税前 4% 逐个累计，金币叶子不计税） */
   tax: number
   profit: number
   profitRate: number
@@ -310,8 +310,8 @@ export function balanceAndMutate(nodes: GraphNode[], wires: GraphWire[], rows: U
         if (entry) price = entry.marketPrice
       }
       const pre = q * price
-      // 金币（点金产物）是货币本身，不计市场税；其余叶子按 5% 计税（与首页计算器口径一致）
-      const after = v.hrid === COIN_HRID ? pre : pre * 0.95
+      // 金币（点金产物）是货币本身，不计市场税；其余叶子按 4% 计税（与首页计算器口径一致）
+      const after = v.hrid === COIN_HRID ? pre : pre * 0.96
       income += after
       taxTotal += pre - after
       nodeInfo.set(v.id, { actions: null, timeCost: null, extraCost: null, preTaxIncome: pre, tax: pre - after, afterTaxIncome: after })
