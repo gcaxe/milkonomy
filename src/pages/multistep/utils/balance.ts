@@ -1,13 +1,21 @@
 import type { Action } from "~/game"
+import type { Product } from "@/calculator"
 import { CoinifyCalculator, DecomposeCalculator, TransmuteCalculator } from "@/calculator/alchemy"
 import { GatherCalculator } from "@/calculator/gather"
 import { ManufactureCalculator } from "@/calculator/manufacture"
 import { getPriceOf } from "@/common/apis/game"
+import { getManualPriceActivated, getManualPriceOf } from "@/common/apis/price"
 import { initBuffMap } from "@/common/apis/player"
 import { getTrans } from "@/locales"
 import { COIN_HRID } from "@/pinia/stores/game"
 import type { GraphNode, GraphWire, NodeCalcResult, UpupItemRow } from "../types"
 import { getGatherActionsOf } from "./recipes"
+
+/** 首页自定义价格：手动 ask/bid 已设置时优先（与首页计算器 handlePrice 口径一致） */
+function usedPrice(hrid: string, level: number | undefined, type: "ask" | "bid", fallback: number): number {
+  const manual = getManualPriceActivated() ? getManualPriceOf(hrid, level)?.[type] : null
+  return manual?.manual && manual.manualPrice != null ? manual.manualPrice : fallback
+}
 
 /** 单批配平结果 */
 export interface BalanceResult {
@@ -119,6 +127,33 @@ export function balanceAndMutate(nodes: GraphNode[], wires: GraphWire[], rows: U
   // 以第一行用户填写的数量为配平基准（不再固定 100）
   const baseQ = rows[0]?.count ?? 100
 
+  /**
+   * 输出变量节点 → 对应的 productList 条目。
+   * 同名产物会有多个条目（如分解：主产物炼金精华 ×25 + 平凡掉落炼金精华 ×1.576@9.33%），
+   * 按输出 pin 的顺序逐个消费同 hrid 条目，保证各节点取各自的 count/rate。
+   */
+  function matchOutputEntries(func: GraphNode, calc: ReturnType<typeof buildFuncCalculator>): Map<string, Product> {
+    const entryMap = new Map<string, Product>()
+    const byHrid = new Map<string, Product[]>()
+    for (const e of calc.productList) {
+      const arr = byHrid.get(e.hrid) ?? []
+      arr.push(e)
+      byHrid.set(e.hrid, arr)
+    }
+    const cursor = new Map<string, number>()
+    for (const ow of wires.filter(x => x.fromPinId.startsWith(`${func.id}:`))) {
+      const tgt = nodeMap.get(ow.toPinId.split(":")[0])
+      if (!tgt || tgt.kind !== "var" || !tgt.hrid) continue
+      const list = byHrid.get(tgt.hrid)
+      if (!list) continue
+      const i = cursor.get(tgt.hrid) ?? 0
+      if (i >= list.length) continue
+      entryMap.set(tgt.id, list[i])
+      cursor.set(tgt.hrid, i + 1)
+    }
+    return entryMap
+  }
+
   /** 纯传播一轮：返回节点数量、函数动作次数与采集耗时，不写回也不结算 */
   function runPass(base: number): PassResult {
     const nodeQ = new Map<string, number>()
@@ -155,10 +190,12 @@ export function balanceAndMutate(nodes: GraphNode[], wires: GraphWire[], rows: U
         queue.push(src)
       }
       // 输出变量（期望 = count × rate × 成功率；炼金失败时什么都不给）
+      // 同名产物按条目逐个匹配（见 matchOutputEntries），不能取 find 第一个
+      const outputEntries = matchOutputEntries(func, calc)
       for (const ow of wires.filter(x => x.fromPinId.startsWith(`${func.id}:`))) {
         const tgt = nodeMap.get(ow.toPinId.split(":")[0])
         if (!tgt || tgt.kind !== "var") continue
-        const entry = calc.productList.find(p => p.hrid === tgt.hrid)
+        const entry = outputEntries.get(tgt.id)
         if (!entry) continue
         const qOut = actions * entry.count * (entry.rate ?? 1) * calc.successRate
         nodeQ.set(tgt.id, qOut)
@@ -292,10 +329,10 @@ export function balanceAndMutate(nodes: GraphNode[], wires: GraphWire[], rows: U
     if (v.kind !== "var") continue
     const q = nodeQ.get(v.id)
     if (q == null) continue
-    // 购买红节点计入成本
+    // 购买红节点计入成本（首页自定义价格 ask 优先）
     if (v.varKind === "red" && v.hrid) {
       if (v.obtain === "gather") continue
-      const cost = q * getPriceOf(v.hrid).ask
+      const cost = q * usedPrice(v.hrid, undefined, "ask", getPriceOf(v.hrid).ask)
       totalCost += cost
       if (v.id === driverNode.id) startItemCost = cost
     }
@@ -306,9 +343,11 @@ export function balanceAndMutate(nodes: GraphNode[], wires: GraphWire[], rows: U
       const producer = producerWire ? nodeMap.get(producerWire.fromPinId.split(":")[0]) : undefined
       if (producer && producer.kind === "func") {
         const fa = funcActions.get(producer.id)
-        const entry = fa?.calc.productList.find(p => p.hrid === v.hrid)
+        const entry = fa ? matchOutputEntries(producer, fa.calc).get(v.id) : undefined
         if (entry) price = entry.marketPrice
       }
+      // 首页自定义价格 bid 优先
+      price = usedPrice(v.hrid, undefined, "bid", price)
       const pre = q * price
       // 金币（点金产物）是货币本身，不计市场税；其余叶子按 4% 计税（与首页计算器口径一致）
       const after = v.hrid === COIN_HRID ? pre : pre * 0.96
@@ -334,8 +373,8 @@ export function balanceAndMutate(nodes: GraphNode[], wires: GraphWire[], rows: U
     let hiddenCost = 0
     for (const e of calc.ingredientList) {
       if (wiredHrids.has(e.hrid)) continue
-      // 单价取计算器条目自带 marketPrice（转化/分解的金币成本是特例价，不是 1）
-      hiddenCost += actions * e.count * e.marketPrice
+      // 单价取计算器条目自带 marketPrice（转化/分解的金币成本是特例价，不是 1）；首页自定义价格 ask 优先
+      hiddenCost += actions * e.count * usedPrice(e.hrid, e.level ?? 0, "ask", e.marketPrice)
     }
     funcInfo.set(func.id, { actions, timeCost, hiddenCost })
     totalTime += actions * timeCost

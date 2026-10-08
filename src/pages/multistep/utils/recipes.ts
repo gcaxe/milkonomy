@@ -2,7 +2,7 @@ import { getActionDetailOf, getAlchemyEssenceDropTable, getAlchemyRareDropTable,
 import { COIN_HRID } from "@/pinia/stores/game"
 import type { Action } from "~/game"
 
-/** A 类覆盖的动作（不含炼金；冲泡需排除茶配方） */
+/** A 类覆盖的动作（不含炼金；冲泡含各类茶/咖啡配方） */
 const A_ACTION_LIST: Action[] = ["cheesesmithing", "crafting", "tailoring", "cooking", "brewing"]
 /** 三采集动作 */
 const GATHER_ACTION_LIST: Action[] = ["milking", "foraging", "woodcutting"]
@@ -10,14 +10,7 @@ const GATHER_ACTION_LIST: Action[] = ["milking", "foraging", "woodcutting"]
 const ALCHEMY_ACTION_KEYS = ["coinify", "decompose", "transmute"] as const
 export type AlchemyActionKey = typeof ALCHEMY_ACTION_KEYS[number]
 
-/** 某物品是否是「茶」：是可被某动作使用的消耗品（冲泡产物命中此规则即排除） */
-export function isTeaItem(hrid: string): boolean {
-  const item = getGameDataApi().itemDetailMap[hrid]
-  if (!item?.consumableDetail?.usableInActionTypeMap) return false
-  return Object.values(item.consumableDetail.usableInActionTypeMap).some(Boolean)
-}
-
-/** 产出该物品的 A 类动作（唯一配方）；冲泡产茶配方已排除。返回 null=无配方 */
+/** 产出该物品的 A 类动作（唯一配方；含冲泡产茶/咖啡配方）。返回 null=无配方 */
 export function findProducingActionOf(hrid: string): string | null {
   const gameData = getGameDataApi()
   const hits: string[] = []
@@ -25,8 +18,6 @@ export function findProducingActionOf(hrid: string): string | null {
     if (!A_ACTION_LIST.some(a => actionHrid.startsWith(`/actions/${a}/`))) continue
     const detail = gameData.actionDetailMap[actionHrid]
     if (!detail.outputItems?.some(o => o.itemHrid === hrid)) continue
-    // 排除冲泡产茶的配方
-    if (actionHrid.startsWith("/actions/brewing/") && isTeaItem(hrid)) continue
     hits.push(actionHrid)
   }
   return hits.length === 1 ? hits[0] : null

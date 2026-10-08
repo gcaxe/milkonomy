@@ -364,5 +364,7 @@ export default {
   "天": "d",
   "时": "h",
   "分": "m",
-  "秒": "s"
+  "秒": "s",
+  "总访问量": "Total Visits",
+  "访客数": "Visitors"
 }

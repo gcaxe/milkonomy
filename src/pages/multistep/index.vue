@@ -1,10 +1,11 @@
 <script lang="ts" setup>
-import { ref } from "vue"
+import { onMounted, ref } from "vue"
 import { Close, Delete, FullScreen, Plus, ZoomIn, ZoomOut } from "@element-plus/icons-vue"
 import { ElMessageBox } from "element-plus"
 import GameInfo from "@/pages/dashboard/components/GameInfo.vue"
 import ActionConfig from "@/pages/dashboard/components/ActionConfig.vue"
 import PriceStatusSelect from "@/pages/dashboard/components/PriceStatusSelect.vue"
+import ManualPriceCard from "@/pages/dashboard/components/ManualPriceCard.vue"
 import { usePriceStatus } from "@/common/composables/usePriceStatus"
 import UpupPanel from "./components/UpupPanel.vue"
 import NodeCanvas from "./components/NodeCanvas.vue"
@@ -22,6 +23,17 @@ const graph = useMultistepGraph()
 const fullscreen = ref(false)
 // 使用指南配图目录（模板表达式里不能用 import.meta）
 const guideBase = `${import.meta.env.BASE_URL}guide/`
+
+// 不蒜子（Busuanzi）统计脚本：页面挂载后注入，计数写入 #busuanzi_value_site_pv / _uv
+onMounted(() => {
+  if (!document.getElementById("busuanzi-script")) {
+    const s = document.createElement("script")
+    s.id = "busuanzi-script"
+    s.async = true
+    s.src = "https://busuanzi.ibruce.info/busuanzi/2.3/busuanzi.pure.mini.js"
+    document.head.appendChild(s)
+  }
+})
 
 /** 清空全部节点与连线（二次确认） */
 function onClearAll() {
@@ -88,6 +100,13 @@ function onClearAll() {
     <!-- 用时占比（配平后显示） -->
     <TimeSharePanel :steps="graph.steps.value" />
 
+    <!-- 自定义价格（与首页共用同一价格存储，默认折叠） -->
+    <el-collapse class="mt-5">
+      <el-collapse-item :title="t('自定义价格')">
+        <ManualPriceCard memory-key="multistep" />
+      </el-collapse-item>
+    </el-collapse>
+
     <!-- 使用指南（与结点图平行层级） -->
     <el-card class="mt-5">
       <template #header>
@@ -114,6 +133,13 @@ function onClearAll() {
         >
       </div>
     </el-card>
+
+    <!-- 不蒜子统计（页面最底部） -->
+    <div class="busuanzi">
+      <span id="busuanzi_container_site_pv">{{ t('总访问量') }} <span id="busuanzi_value_site_pv"></span></span>
+      <span class="sep">|</span>
+      <span id="busuanzi_container_site_uv">{{ t('访客数') }} <span id="busuanzi_value_site_uv"></span></span>
+    </div>
   </div>
 </template>
 
@@ -183,6 +209,13 @@ function onClearAll() {
   color: #a855f7;
 }
 .guide-line + .guide-line { margin-top: 1em; }
+.busuanzi {
+  margin-top: 16px;
+  text-align: center;
+  color: var(--el-text-color-secondary);
+  font-size: 13px;
+  .sep { margin: 0 8px; }
+}
 .guide-images {
   margin-top: 12px;
   display: flex;
